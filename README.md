@@ -6,11 +6,11 @@ Repozytorium pracy dyplomowej "Implementacja prototypu planera end-to-end"
 ## Przygotowanie środowiska
 
 1. Przejdź do głównego folderu repozytrium
-2. Zainstaluj python venv:
+2. Zainicjuj wirtualne środowisko venv (możesz użyć dowolnej innej nazwy):
    ```bash
    python -m venv venv
    ```
-3. Uruchom wirtualne środowisko:
+3. Uruchom wirtualne środowisko (zastąp venv nazwą twojego środowiska, jeśli użyłeś innej w kroku 2.):
    ```bash
    source venv/bin/activate
    ```
