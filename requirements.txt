@@ -1,3 +1,5 @@
+opencv-python
 scikit-learn
 numpy
 dearpygui
+natsort
