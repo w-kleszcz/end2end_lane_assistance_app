@@ -25,3 +25,14 @@ Repozytorium pracy dyplomowej "Implementacja prototypu planera end-to-end"
 ```bash
 python src/app.py
 ```
+
+---
+## Obsługa danych
+
+Kontrola wersji nie obejmuje danych używanych w aplikacji.
+
+Obecnie obsługiwanym datasetem jest https://drive.google.com/file/d/1PZWa6H0i1PCH9zuYcIh5Ouk_p-9Gh58B/view
+
+Odpakuj pobrane archiwum w folderze data/raw
+
+---
