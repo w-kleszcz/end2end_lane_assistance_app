@@ -1,6 +1,6 @@
 # --- Data Parameters ---
-ANNOTATIONS_FILE = 'data.txt'
-IMAGES_DIR = 'data'
+ANNOTATIONS_FILE = 'data/raw/07012018/data.txt'
+IMAGES_DIR = 'data/raw/07012018/data'
 
 # Image dimensions (for PyTorch backend: Channels, Height, Width)
 IMG_CHANNELS = 3
@@ -17,7 +17,7 @@ VAL_SPLIT_SIZE = 0.2  # 20% of data for the validation set
 RANDOM_STATE = 42     # For ensuring reproducibility of data split
 
 # --- Model Saving ---
-MODEL_SAVE_PATH = 'pilotnet_keras_torch_backend.keras'
+MODEL_SAVE_PATH = 'models/pilotnet_keras_torch_backend.keras'
 
 # --- DataLoader Parameters ---
 # Set to >0 for multi-threaded loading, e.g., 2 or 4.

@@ -103,10 +103,18 @@ def parse_annotations_file(annotations_filepath):
                  print(f"WARNING: Line {line_num} in '{annotations_filepath}', incorrect format after comma: '{parts[1]}', skipping.")
     return all_samples
 
+def split_all_samples(all_samples, per_cent_test_set):
+    """Splits the dataset into training and validation sets."""
+    # Calculate the index for the split
+    # Select every second sample starting from index 1 for test set
+    test_samples = all_samples[1::2]  # Take every second sample starting from index 1
+    all_samples = all_samples[::2]  # Take every second sample starting from index 0
+
+    return all_samples, test_samples
+
 # Main function to create DataLoaders
-def get_dataloaders():
+def get_dataloaders(all_samples, test_samples):
     """Creates and returns DataLoaders for training and validation sets."""
-    all_samples = parse_annotations_file(config.ANNOTATIONS_FILE)
 
     if not all_samples:
         print("ERROR: No valid samples found in the annotations file. Cannot create DataLoaders.")
@@ -159,4 +167,18 @@ def get_dataloaders():
     elif not val_samples:
         print("WARNING: No validation samples after split.")
     
-    return train_loader, val_loader
+    test_dataset = DrivingDataset(test_samples, config.IMAGES_DIR, transform=data_transforms['train'])
+    test_loader = None
+    if len(test_samples) > 0:
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=config.BATCH_SIZE,
+            shuffle=False, # Do not shuffle validation set
+            num_workers=config.NUM_WORKERS,
+            pin_memory=torch.cuda.is_available(),
+            collate_fn=collate_fn_skip_broken
+        )
+    else:
+        print("WARNING: No test samples after split.")
+
+    return train_loader, val_loader, test_loader
