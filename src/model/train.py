@@ -1,5 +1,5 @@
 import os
-import keras # Keras 3.0
+import keras  # Keras 3.0
 
 # Imports from local modules
 import argparse
@@ -16,12 +16,15 @@ def set_keras_backend():
         if os.environ.get("KERAS_BACKEND") != "torch":
             print("Setting Keras backend to 'torch'...")
             os.environ["KERAS_BACKEND"] = "torch"
-        
+
         import keras as current_keras_instance
+
         print(f"Keras backend in use: {current_keras_instance.backend.backend()}")
         if current_keras_instance.backend.backend() != "torch":
             print("ERROR: Failed to set Keras backend to 'torch'.")
-            print("Please set the environment variable KERAS_BACKEND='torch' before running the script.")
+            print(
+                "Please set the environment variable KERAS_BACKEND='torch' before running the script."
+            )
             return False
         return True
     except Exception as e:
@@ -32,7 +35,12 @@ def set_keras_backend():
 def main():
 
     parser = argparse.ArgumentParser(description="Train or test the PilotNet model.")
-    parser.add_argument('--mode', choices=['train', 'test'], default='train', help="Mode: train and test or only test the existing model.")
+    parser.add_argument(
+        "--mode",
+        choices=["train", "test"],
+        default="train",
+        help="Mode: train and test or only test the existing model.",
+    )
     args = parser.parse_args()
 
     pilotnet_model = None
@@ -44,14 +52,14 @@ def main():
 
     train_loader, val_loader, test_loader = get_dataloaders(all_samples, test_samples)
 
-    if args.mode == 'train':
+    if args.mode == "train":
         if train_loader is None:
             print("ERROR: Failed to create train_loader. Aborting.")
             return
-        if not train_loader and not val_loader: # If both are None
+        if not train_loader and not val_loader:  # If both are None
             print("ERROR: Failed to create any DataLoaders. Aborting.")
             return
-        
+
         # Check if train_loader has any batches
         if len(train_loader) == 0:
             print("ERROR: train_loader is empty (contains no batches). Aborting.")
@@ -66,7 +74,7 @@ def main():
         print("Compiling the model...")
         pilotnet_model.compile(
             optimizer=keras.optimizers.Adam(learning_rate=config.LEARNING_RATE),
-            loss='mse' # Mean Squared Error for regression
+            loss="mse",  # Mean Squared Error for regression
         )
         pilotnet_model.summary()
 
@@ -76,8 +84,10 @@ def main():
             history = pilotnet_model.fit(
                 train_loader,
                 epochs=config.NUM_EPOCHS,
-                validation_data=val_loader if val_loader and len(val_loader) > 0 else None, # Pass only if val_loader exists and is not empty
-                verbose=1 # 0 = silent, 1 = progress bar, 2 = one line per epoch
+                validation_data=(
+                    val_loader if val_loader and len(val_loader) > 0 else None
+                ),  # Pass only if val_loader exists and is not empty
+                verbose=1,  # 0 = silent, 1 = progress bar, 2 = one line per epoch
             )
             print("\nTraining completed.")
 
@@ -89,10 +99,11 @@ def main():
         except Exception as e:
             print(f"\nAn error occurred during training or saving the model: {e}")
             import traceback
+
             traceback.print_exc()
-    elif args.mode == 'test':
+    elif args.mode == "test":
         pilotnet_model = load_model(config.MODEL_SAVE_PATH)
-    
+
     # --- 6. Model Evaluation on Validation Dataset ---
     preds = []
     truths = []
@@ -111,6 +122,7 @@ def main():
     plt.ylabel("Steering Angle")
     plt.show()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # e.g., in the terminal: export KERAS_BACKEND="torch" && python train.py
     main()

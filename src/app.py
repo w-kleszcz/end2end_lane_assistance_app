@@ -9,7 +9,7 @@ from natsort import natsorted
 
 
 class Player:
-    FRAME_DELAY_DEFAULT = 0.033 # ~30 FPS
+    FRAME_DELAY_DEFAULT = 0.033  # ~30 FPS
 
     def __init__(self, image_folder, texture_id):
         self.image_paths = natsorted(glob.glob(os.path.join(image_folder, "*.jpg")))
@@ -69,10 +69,10 @@ class DatasetPreparator(Player):
         self.images_to_remove = []
         self.test_set_start = None
         self.test_set_finish = None
-    
+
     def on_remove_frame():
         pass
-    
+
     def on_undo_last_frame_remove():
         pass
 
@@ -81,19 +81,19 @@ class DatasetPreparator(Player):
 
     def on_test_dataset_finish():
         pass
-    
+
     def on_save_dataset(path):
         pass
 
 
-
 def folder_selected_callback(sender, app_data):
     # Update folder path input field with the selected folder path
-    dpg.set_value("folder_path", app_data['file_path_name'])
+    dpg.set_value("folder_path", app_data["file_path_name"])
+
 
 def file_selected_callback(sender, app_data):
     # Update file path input field with the selected file path
-    dpg.set_value("file_path", app_data['file_path_name'])
+    dpg.set_value("file_path", app_data["file_path_name"])
 
 
 # ---------- Create texture buffer ----------
@@ -115,26 +115,44 @@ with dpg.window(label="End2end Lane Assistance App", width=700, height=550):
     with dpg.tab_bar():
 
         with dpg.tab(label="Data Preparation"):
-        
+
             # File and Folder Browsing Controls
             dpg.add_text("Raw images folder:")
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Browse", callback=lambda: dpg.show_item("folder_dialog"))  # Button for browsing folder
-                dpg.add_input_text(tag="folder_path", width=500, readonly=True)  # Textbox for folder path
+                dpg.add_button(
+                    label="Browse", callback=lambda: dpg.show_item("folder_dialog")
+                )  # Button for browsing folder
+                dpg.add_input_text(
+                    tag="folder_path", width=500, readonly=True
+                )  # Textbox for folder path
 
             dpg.add_text("Raw annotations file:")
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Browse", callback=lambda: dpg.show_item("file_dialog"))
-                dpg.add_input_text(tag="file_path", width=500, readonly=True)  # Textbox for file path
-            
+                dpg.add_button(
+                    label="Browse", callback=lambda: dpg.show_item("file_dialog")
+                )
+                dpg.add_input_text(
+                    tag="file_path", width=500, readonly=True
+                )  # Textbox for file path
+
             dpg.add_button(label="Set raw dataset", callback=None)
 
             # Folder Dialog (for selecting folders)
-            with dpg.file_dialog(directory_selector=True, show=False, tag="folder_dialog", callback=folder_selected_callback):
+            with dpg.file_dialog(
+                directory_selector=True,
+                show=False,
+                tag="folder_dialog",
+                callback=folder_selected_callback,
+            ):
                 dpg.add_file_extension(".*")  # Allow any file type
 
             # File Dialog (for selecting a single file)
-            with dpg.file_dialog(directory_selector=False, show=False, tag="file_dialog", callback=file_selected_callback):
+            with dpg.file_dialog(
+                directory_selector=False,
+                show=False,
+                tag="file_dialog",
+                callback=file_selected_callback,
+            ):
                 dpg.add_file_extension(".*")  # Allow any file type
 
             dpg.add_image(texture_id)
@@ -145,8 +163,10 @@ with dpg.window(label="End2end Lane Assistance App", width=700, height=550):
                 dpg.add_button(label="Step Forward", callback=player.on_step_forward)
                 dpg.add_button(label="Step Back", callback=player.on_step_back)
                 dpg.add_button(label="Speed Up", callback=player.on_playback_speed_up)
-                dpg.add_button(label="Speed Reset", callback=player.on_playback_speed_reset)
-            
+                dpg.add_button(
+                    label="Speed Reset", callback=player.on_playback_speed_reset
+                )
+
             with dpg.group(horizontal=True):
                 dpg.add_button(label="Remove frame", callback=None)
                 dpg.add_button(label="Undo last remove", callback=None)
@@ -156,15 +176,23 @@ with dpg.window(label="End2end Lane Assistance App", width=700, height=550):
 
         with dpg.tab(label="Model Training"):
             dpg.add_text("Model training will be implemented here.")
-            dpg.add_button(label="Train Model", callback=lambda: print("Model training started."))
+            dpg.add_button(
+                label="Train Model", callback=lambda: print("Model training started.")
+            )
 
         with dpg.tab(label="Model Evaluation"):
             dpg.add_text("Model evaluation will be implemented here.")
-            dpg.add_button(label="Evaluate Model", callback=lambda: print("Model evaluation started."))
+            dpg.add_button(
+                label="Evaluate Model",
+                callback=lambda: print("Model evaluation started."),
+            )
 
         with dpg.tab(label="Model Deployment"):
             dpg.add_text("Model deployment will be implemented here.")
-            dpg.add_button(label="Deploy Model", callback=lambda: print("Model deployment started."))
+            dpg.add_button(
+                label="Deploy Model",
+                callback=lambda: print("Model deployment started."),
+            )
 
 
 # ---------- Launch ----------
