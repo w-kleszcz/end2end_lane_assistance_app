@@ -3,3 +3,10 @@ scikit-learn
 numpy
 dearpygui
 natsort
+keras
+torch
+torchvision
+torchaudio
+Pillow
+matplotlib
+tensorflow
