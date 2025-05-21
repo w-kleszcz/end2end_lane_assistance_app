@@ -198,7 +198,6 @@ class DatasetPreparator(Player):
             height=300,
             default_filename="output.txt",
             file_count=1,
-            file_dialog_mode=dpg.mvFileDialogMode.Save,
         ):
             dpg.add_file_extension(".*")
 
