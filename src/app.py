@@ -4,6 +4,7 @@ import glob
 import threading
 import time
 import numpy as np
+import yaml
 import dearpygui.dearpygui as dpg
 from natsort import natsorted
 
@@ -14,8 +15,10 @@ class Player:
     def __init__(self, texture_id, image_folder=""):
         if image_folder == "":
             self.image_paths = []
+            self.images_folder = ""
         else:
             self.image_paths = natsorted(glob.glob(os.path.join(image_folder, "*.jpg")))
+            self.images_folder = image_folder
             dpg.configure_item(
                 "frame_slider", max_value=len(self.get_valid_frame_indices()) - 1
             )
@@ -77,6 +80,7 @@ class Player:
         self.image_paths = natsorted(
             glob.glob(os.path.join(app_data["file_path_name"], "*.jpg"))
         )
+        self.images_folder = app_data["file_path_name"]
         self.images_idx_to_skip = []
         self.frame_index = 0
         dpg.configure_item(
@@ -191,15 +195,12 @@ class DatasetPreparator(Player):
         with dpg.file_dialog(
             directory_selector=False,
             show=False,
-            modal=True,
-            tag="save_file_dialog",
             callback=self.save_file_with_dataset_metadata,
-            width=400,
-            height=300,
-            default_filename="output.txt",
-            file_count=1,
+            id="save_file_dialog",
+            width=500,
+            height=400,
         ):
-            dpg.add_file_extension(".*")
+            dpg.add_file_extension(".yaml")
 
     def set_raw_data_folder(self, raw_data_folder):
         self.raw_data_folder = raw_data_folder
@@ -217,11 +218,18 @@ class DatasetPreparator(Player):
         print("Test set finish index set to ", self.test_set_idx_finish)
 
     def on_save_dataset(path):
-        pass
-
-    def save_file_with_dataset_metadata():
         dpg.show_item("save_file_dialog")
-        pass
+
+    def save_file_with_dataset_metadata(self, sender, app_data):
+        data = {
+            "annotations_file": self.image_annotations_file,
+            "images_dir": self.images_folder,
+            "indices_to_skip": self.images_idx_to_skip,
+            "test_set_idx_start": self.test_set_idx_start,
+            "test_set_idx_end": self.test_set_idx_finish,
+        }
+        with open(app_data["file_path_name"], "w") as f:
+            yaml.dump(data, f, default_flow_style=False)
 
 
 # ---------- Create texture buffer ----------
@@ -271,7 +279,7 @@ with dpg.window(label="End2end Lane Assistance App", width=700, height=550):
                 tag="folder_dialog",
                 callback=dataset_preparator.on_folder_selected,
             ):
-                dpg.add_file_extension(".*")  # Allow any file type
+                dpg.add_file_extension(".*")
 
             # File Dialog (for selecting a single file)
             with dpg.file_dialog(
@@ -280,7 +288,7 @@ with dpg.window(label="End2end Lane Assistance App", width=700, height=550):
                 tag="file_dialog",
                 callback=dataset_preparator.on_image_annotations_file_selected,
             ):
-                dpg.add_file_extension(".*")  # Allow any file type
+                dpg.add_file_extension(".txt")
 
             dpg.add_image(player_texture_id)
 
