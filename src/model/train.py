@@ -5,7 +5,7 @@ import keras  # Keras 3.0
 import argparse
 import config
 import matplotlib.pyplot as plt
-from data_loader import get_dataloaders, parse_annotations_file, split_all_samples
+from data_loader import create_dataloaders_from_yaml # Updated import
 from model import build_pilotnet_model
 from tensorflow.keras.models import load_model
 
@@ -39,20 +39,36 @@ def main():
         "--mode",
         choices=["train", "test"],
         default="train",
-        help="Mode: train and test or only test the existing model.",
+        help="Mode: 'train' to train and test, or 'test' to only test an existing model.",
+    )
+    parser.add_argument(
+        "--data_config",
+        type=str,
+        required=True,
+        help="Path to the data YAML configuration file (e.g., new_data/data.yaml).",
+    )
+    parser.add_argument(
+        "--plot_save_path",
+        type=str,
+        default="steering_angle_evaluation.png",
+        help="Path to save the evaluation plot (e.g., plots/evaluation.png).",
     )
     args = parser.parse_args()
 
     pilotnet_model = None
 
     # --- 1. Data Preparation ---
-    print("Loading and preparing data...")
-    all_samples = parse_annotations_file(config.ANNOTATIONS_FILE)
-    all_samples, test_samples = split_all_samples(all_samples, 0.2)
+    print(f"Loading and preparing data using YAML config: {args.data_config}...")
+    train_loader, val_loader, test_loader = create_dataloaders_from_yaml(args.data_config)
 
-    train_loader, val_loader, test_loader = get_dataloaders(all_samples, test_samples)
+    if not train_loader and not val_loader and not test_loader:
+        print("ERROR: Failed to create any DataLoaders from YAML. Aborting.")
+        return
 
     if args.mode == "train":
+        if not train_loader and not val_loader: # If both are None, specific for training
+            print("ERROR: Failed to create training or validation DataLoaders. Aborting training.")
+            return
         if train_loader is None:
             print("ERROR: Failed to create train_loader. Aborting.")
             return
@@ -104,24 +120,41 @@ def main():
     elif args.mode == "test":
         pilotnet_model = load_model(config.MODEL_SAVE_PATH)
 
-    # --- 6. Model Evaluation on Validation Dataset ---
-    preds = []
-    truths = []
+    # --- 6. Model Evaluation on Test Dataset ---
+    if test_loader and len(test_loader) > 0:
+        print("\nEvaluating model on the test set...")
+        preds = []
+        truths = []
 
-    for images, labels in test_loader:
-        outputs = pilotnet_model.predict(images, verbose=0)
-        preds.extend(outputs.flatten())
-        truths.extend(labels.flatten())
+        for images, labels in test_loader:
+            outputs = pilotnet_model.predict(images, verbose=0)
+            preds.extend(outputs.flatten())
+            truths.extend(labels.flatten())
 
-    # Plot predictions vs actual steering angles
-    plt.plot(preds, label="Predicted")
-    plt.plot(truths, label="Actual")
-    plt.legend()
-    plt.title("Steering Angle Prediction on Test Set")
-    plt.xlabel("Sample")
-    plt.ylabel("Steering Angle")
-    plt.show()
+        # Plot predictions vs actual steering angles
+        plt.figure(figsize=(10, 6))
+        plt.plot(truths, label="Actual Steering Angles", alpha=0.7)
+        plt.plot(preds, label="Predicted Steering Angles", alpha=0.7)
+        plt.title("Steering Angle Prediction on Test Set")
+        plt.xlabel("Sample Index in Test Set")
+        plt.ylabel("Steering Angle")
+        plt.legend()
+        plt.grid(True)
+        
+        # Ensure the directory for saving the plot exists
+        plot_dir = os.path.dirname(args.plot_save_path)
+        if plot_dir and not os.path.exists(plot_dir):
+            os.makedirs(plot_dir)
+            print(f"Created directory for plot: {plot_dir}")
 
+        plt.savefig(args.plot_save_path)
+        print(f"Evaluation plot saved to {args.plot_save_path}")
+        # plt.show() # Keep this commented out or remove if interactive display is not needed
+
+    elif args.mode == "test":
+        print("WARNING: Test loader is not available or empty. Cannot perform evaluation on test set.")
+    else: # train mode but no test_loader
+        print("INFO: No test_loader available to perform evaluation after training.")
 
 if __name__ == "__main__":
     # e.g., in the terminal: export KERAS_BACKEND="torch" && python train.py

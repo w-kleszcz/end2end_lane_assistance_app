@@ -1,6 +1,7 @@
 # --- Data Parameters ---
-ANNOTATIONS_FILE = "data/raw/07012018/data.txt"
-IMAGES_DIR = "data/raw/07012018/data"
+# ANNOTATIONS_FILE and IMAGES_DIR are now specified in the data YAML file.
+# ANNOTATIONS_FILE = "data/raw/07012018/data.txt"
+# IMAGES_DIR = "data/raw/07012018/data"
 
 # Image dimensions (for PyTorch backend: Channels, Height, Width)
 IMG_CHANNELS = 3

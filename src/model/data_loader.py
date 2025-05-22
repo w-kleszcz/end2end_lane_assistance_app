@@ -4,7 +4,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
-from sklearn.model_selection import train_test_split  # We use scikit-learn
+from sklearn.model_selection import train_test_split
+import yaml  # Added for YAML parsing
 
 # Import configuration
 import config
@@ -118,65 +119,76 @@ def parse_annotations_file(annotations_filepath):
     return all_samples
 
 
-def split_all_samples(all_samples, per_cent_test_set):
-    """Splits the dataset into training and validation sets."""
-    # Calculate the index for the split
-    # Select every second sample starting from index 1 for test set
-    test_samples = all_samples[1::2]  # Take every second sample starting from index 1
-    all_samples = all_samples[::2]  # Take every second sample starting from index 0
+# Function to load YAML configuration
+def load_yaml_config(yaml_filepath):
+    """Loads configuration from a YAML file."""
+    if not os.path.exists(yaml_filepath):
+        print(f"ERROR: YAML configuration file '{yaml_filepath}' not found.")
+        return None
+    try:
+        with open(yaml_filepath, 'r') as f:
+            config_data = yaml.safe_load(f)
+        return config_data
+    except yaml.YAMLError as e:
+        print(f"ERROR: Could not parse YAML file '{yaml_filepath}': {e}")
+        return None
+    except Exception as e:
+        print(f"ERROR: An unexpected error occurred while reading YAML file '{yaml_filepath}': {e}")
+        return None
 
-    return all_samples, test_samples
 
-
-# Main function to create DataLoaders
-def get_dataloaders(all_samples, test_samples):
-    """Creates and returns DataLoaders for training and validation sets."""
-
-    if not all_samples:
+# Refactored function to create DataLoaders
+def get_dataloaders(
+    samples_for_train_val_split, dedicated_test_samples, images_dir, data_transforms
+):
+    """Creates and returns DataLoaders for training, validation, and test sets."""
+    if not samples_for_train_val_split and not dedicated_test_samples:
         print(
             "ERROR: No valid samples found in the annotations file. Cannot create DataLoaders."
         )
         return None, None  # Return None if no data
 
     # Split data into training and validation sets using scikit-learn
-    train_samples, val_samples = train_test_split(
-        all_samples,
-        test_size=config.VAL_SPLIT_SIZE,
-        random_state=config.RANDOM_STATE,
-        shuffle=True,  # Shuffle data before splitting
-    )
-
-    print(f"Total number of samples: {len(all_samples)}")
-    print(f"Number of training samples: {len(train_samples)}")
-    print(f"Number of validation samples: {len(val_samples)}")
-
-    if not train_samples:
-        print(
-            "ERROR: Training set is empty after split. Check data and val_split_size."
+    if samples_for_train_val_split:
+        train_samples, val_samples = train_test_split(
+            samples_for_train_val_split,
+            test_size=config.VAL_SPLIT_SIZE,
+            random_state=config.RANDOM_STATE,
+            shuffle=True,  # Shuffle data before splitting
         )
-        # return None, None # Can return None if there is no training data
+        print(f"Total number of samples for train/val split: {len(samples_for_train_val_split)}")
+        print(f"Number of training samples: {len(train_samples)}")
+        print(f"Number of validation samples: {len(val_samples)}")
 
-    data_transforms = get_data_transforms()
+        if not train_samples:
+            print(
+                "WARNING: Training set is empty after split. Check data and val_split_size."
+            )
+    else:
+        print("WARNING: No samples provided for training/validation split.")
+        train_samples, val_samples = [], []
 
     train_dataset = DrivingDataset(
-        train_samples, config.IMAGES_DIR, transform=data_transforms["train"]
+        train_samples, images_dir, transform=data_transforms["train"]
     )
 
     # Initialize val_dataset only if there is validation data
     val_dataset = None
     if val_samples:
         val_dataset = DrivingDataset(
-            val_samples, config.IMAGES_DIR, transform=data_transforms["val"]
+            val_samples, images_dir, transform=data_transforms["val"]
         )
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config.BATCH_SIZE,
-        shuffle=True,
-        num_workers=config.NUM_WORKERS,
-        pin_memory=torch.cuda.is_available(),  # Use pin_memory if GPU is available
-        collate_fn=collate_fn_skip_broken,
-    )
+    train_loader = None
+    if train_dataset and len(train_dataset) > 0:
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=config.BATCH_SIZE,
+            shuffle=True,
+            num_workers=config.NUM_WORKERS,
+            pin_memory=torch.cuda.is_available(),
+            collate_fn=collate_fn_skip_broken,
+        )
 
     val_loader = None
     if (
@@ -190,23 +202,103 @@ def get_dataloaders(all_samples, test_samples):
             pin_memory=torch.cuda.is_available(),
             collate_fn=collate_fn_skip_broken,
         )
-    elif not val_samples:
-        print("WARNING: No validation samples after split.")
+    elif not val_samples and samples_for_train_val_split:
+        print("WARNING: No validation samples after split, or val_split_size is 0 or 1.")
 
-    test_dataset = DrivingDataset(
-        test_samples, config.IMAGES_DIR, transform=data_transforms["train"]
-    )
+    # Test DataLoader
     test_loader = None
-    if len(test_samples) > 0:
-        test_loader = DataLoader(
-            test_dataset,
-            batch_size=config.BATCH_SIZE,
-            shuffle=False,  # Do not shuffle validation set
-            num_workers=config.NUM_WORKERS,
-            pin_memory=torch.cuda.is_available(),
-            collate_fn=collate_fn_skip_broken,
+    if dedicated_test_samples:
+        print(f"Number of dedicated test samples: {len(dedicated_test_samples)}")
+        test_dataset = DrivingDataset(
+            dedicated_test_samples, images_dir, transform=data_transforms["val"] # Use 'val' transform for test
         )
+        if len(test_dataset) > 0:
+            test_loader = DataLoader(
+                test_dataset,
+                batch_size=config.BATCH_SIZE,
+                shuffle=False,
+                num_workers=config.NUM_WORKERS,
+                pin_memory=torch.cuda.is_available(),
+                collate_fn=collate_fn_skip_broken,
+            )
+        else:
+            print("WARNING: Test dataset is empty although dedicated_test_samples were provided.")
     else:
-        print("WARNING: No test samples after split.")
+        print("INFO: No dedicated test samples provided.")
 
     return train_loader, val_loader, test_loader
+
+
+# New main function to orchestrate data loading using YAML
+def create_dataloaders_from_yaml(yaml_config_path):
+    """
+    Loads data configuration from YAML, parses annotations, splits data,
+    and creates DataLoaders.
+    """
+    data_cfg = load_yaml_config(yaml_config_path)
+    if not data_cfg:
+        return None, None, None # Failed to load YAML
+
+    annotations_filepath = data_cfg.get('annotations_file')
+    images_dir = data_cfg.get('images_dir')
+
+    if not annotations_filepath or not images_dir:
+        print("ERROR: 'annotations_file' or 'images_dir' not found in YAML config.")
+        return None, None, None
+
+    all_parsed_samples = parse_annotations_file(annotations_filepath)
+    if not all_parsed_samples:
+        print(f"ERROR: No samples parsed from '{annotations_filepath}'.")
+        return None, None, None
+
+    # Apply indices_to_skip
+    indices_to_skip_yaml = data_cfg.get('indices_to_skip', [])
+    if not isinstance(indices_to_skip_yaml, list):
+        print(f"WARNING: 'indices_to_skip' in YAML is not a list. Found: {indices_to_skip_yaml}. Skipping this filter.")
+        indices_to_skip_set = set()
+    else:
+        indices_to_skip_set = set(indices_to_skip_yaml)
+    
+    samples_after_skip = [
+        sample for i, sample in enumerate(all_parsed_samples) if i not in indices_to_skip_set
+    ]
+    
+    num_skipped = len(all_parsed_samples) - len(samples_after_skip)
+    if num_skipped > 0:
+        print(f"INFO: Skipped {num_skipped} samples based on 'indices_to_skip' from YAML.")
+
+    if not samples_after_skip:
+        print("ERROR: All samples were skipped or no samples remained after filtering 'indices_to_skip'.")
+        return None, None, None
+
+    # Split into test set and remaining samples for train/val based on YAML indices
+    test_set_idx_start = data_cfg.get('test_set_idx_start')
+    test_set_idx_end = data_cfg.get('test_set_idx_end')
+
+    dedicated_test_samples = []
+    samples_for_train_val_split = []
+
+    if test_set_idx_start is not None and test_set_idx_end is not None:
+        if not (isinstance(test_set_idx_start, int) and isinstance(test_set_idx_end, int)) or \
+           test_set_idx_start < 0 or test_set_idx_end > len(samples_after_skip) or test_set_idx_start >= test_set_idx_end:
+            print(
+                f"ERROR: Invalid 'test_set_idx_start' ({test_set_idx_start}) or "
+                f"'test_set_idx_end' ({test_set_idx_end}) for {len(samples_after_skip)} available samples after skipping. "
+                "Proceeding with all available samples for train/validation split."
+            )
+            samples_for_train_val_split = samples_after_skip
+        else:
+            dedicated_test_samples = samples_after_skip[test_set_idx_start:test_set_idx_end]
+            samples_for_train_val_split = samples_after_skip[:test_set_idx_start] + samples_after_skip[test_set_idx_end:]
+            print(f"INFO: Defined test set from YAML: {len(dedicated_test_samples)} samples (indices {test_set_idx_start}-{test_set_idx_end-1}).")
+            print(f"INFO: Remaining samples for train/val split: {len(samples_for_train_val_split)}.")
+    else:
+        print("INFO: 'test_set_idx_start' and/or 'test_set_idx_end' not found in YAML. "
+              "All samples after skipping will be used for train/validation split. No dedicated test set from YAML.")
+        samples_for_train_val_split = samples_after_skip
+
+    data_transforms = get_data_transforms()
+
+    return get_dataloaders(
+        samples_for_train_val_split, dedicated_test_samples, images_dir, data_transforms
+    )
