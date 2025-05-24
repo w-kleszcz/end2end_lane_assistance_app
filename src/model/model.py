@@ -1,5 +1,5 @@
 import keras
-import config
+from . import config
 
 
 def build_pilotnet_model(input_shape):

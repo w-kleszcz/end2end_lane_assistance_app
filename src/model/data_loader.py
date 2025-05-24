@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 import yaml  # Added for YAML parsing
 
 # Import configuration
-import config
+from . import config
 
 
 # PyTorch Dataset class

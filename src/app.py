@@ -3,11 +3,22 @@ import cv2
 import glob
 import threading
 import time
+import queue
 import numpy as np
 import yaml
 import dearpygui.dearpygui as dpg
 from natsort import natsorted
+import sys # For Keras backend setting
+import importlib # For Keras backend setting
 
+# --- Potentially Keras and model related imports ---
+# These will be used in the training section
+# import keras # Import later after backend is set or within training function
+import matplotlib.pyplot as plt
+
+from model.data_loader import create_dataloaders_from_yaml
+from model.model import build_pilotnet_model
+import model.config as train_config
 
 class Player:
     FRAME_DELAY_DEFAULT = 0.033  # ~30 FPS
@@ -270,6 +281,15 @@ class DatasetPreparator(Player):
 
 APP_WINDOW_WIDTH = 660
 APP_WINDOW_HEIGHT = 770
+UI_INPUT_WIDTH_LONG = 550
+
+# --- Globals for Model Training ---
+training_log_queue = queue.Queue()
+training_log_tag = "training_log_text_area"
+training_status_tag = "training_status_indicator"
+train_button_tag = "train_model_button_tag"
+data_config_path_input_tag = "data_config_path_input_tag"
+plot_save_path_input_tag = "plot_save_path_input_tag"
 
 # ---------- Create texture buffer ----------
 dpg.create_context()
@@ -284,6 +304,208 @@ with dpg.texture_registry():
     player_texture_id = dpg.generate_uuid()
     dummy_image = np.zeros((480, 640, 4), dtype=np.float32)
     dpg.add_dynamic_texture(640, 480, dummy_image.flatten(), tag=player_texture_id)
+
+# ---------- Model Training Functions ----------
+def log_to_gui(message):
+    """Puts a message into the training log queue."""
+    training_log_queue.put(message)
+
+def set_keras_backend_for_app(log_fn):
+    """Sets the Keras backend to 'torch' and verifies it, logging to log_fn."""
+    try:
+        backend_to_set = "torch"
+        current_env_backend = os.environ.get("KERAS_BACKEND")
+
+        if current_env_backend != backend_to_set:
+            log_fn(f"Attempting to set Keras backend to '{backend_to_set}'...")
+            os.environ["KERAS_BACKEND"] = backend_to_set
+        else:
+            log_fn(f"Keras backend already set to '{backend_to_set}' in environment.")
+
+        if 'keras' in sys.modules:
+            importlib.reload(sys.modules['keras'])
+        import keras
+
+        current_keras_backend = keras.backend.backend()
+        log_fn(f"Keras backend in use: {current_keras_backend}")
+
+        if current_keras_backend != backend_to_set:
+            log_fn(f"ERROR: Failed to set Keras backend to '{backend_to_set}'. Current backend: {current_keras_backend}")
+            log_fn("Please set the environment variable KERAS_BACKEND='torch' before running the script.")
+            return False
+        log_fn(f"Keras backend successfully configured to '{backend_to_set}'.")
+        return True
+    except Exception as e:
+        log_fn(f"An error occurred while setting the Keras backend: {e}")
+        import traceback
+        log_fn(traceback.format_exc())
+        return False
+def format_log_message(epoch, logs):
+    """Formats the log message for a Keras epoch."""
+    loss_val = logs.get('loss')
+    val_loss = logs.get('val_loss')
+
+    # Format loss, handling potential None
+    loss_str = f"{loss_val:.4f}" if loss_val is not None else "N/A"
+
+    # Format val_loss, handling potential None
+    val_loss_str = f"{val_loss:.4f}" if val_loss is not None else "N/A"
+
+    return (
+        f"Epoch {epoch+1}/{train_config.NUM_EPOCHS} - "
+        f"loss: {loss_str} - "
+        f"val_loss: {val_loss_str}\n"
+    )
+
+def run_training_thread(data_config_path, plot_save_path):
+    """The main logic for training, adapted from train.py."""
+    try:
+        log_to_gui("--- Training Process Started ---\n")
+        if not set_keras_backend_for_app(log_to_gui):
+            dpg.set_value(training_status_tag, "Error: Keras backend")
+            return
+
+        import keras # Now safe to import and use Keras
+        from keras.callbacks import LambdaCallback
+
+        log_to_gui(f"Using data config: {data_config_path}\n")
+        log_to_gui(f"Evaluation plot will be saved to: {plot_save_path}\n")
+        log_to_gui(f"Model will be saved to: {train_config.MODEL_SAVE_PATH}\n")
+
+        # --- 1. Data Preparation ---
+        log_to_gui("Loading and preparing data...\n")
+        # Note: create_dataloaders_from_yaml might print, consider capturing or modifying it
+        train_loader, val_loader, test_loader = create_dataloaders_from_yaml(data_config_path)
+
+        if not train_loader and not val_loader and not test_loader:
+            log_to_gui("ERROR: Failed to create any DataLoaders. Aborting.\n")
+            dpg.set_value(training_status_tag, "Error: Data loading failed")
+            return
+        if not train_loader:
+            log_to_gui("ERROR: Failed to create training DataLoader. Aborting training.\n")
+            dpg.set_value(training_status_tag, "Error: Training data missing")
+            return
+        if len(train_loader) == 0:
+            log_to_gui("ERROR: train_loader is empty. Check annotations, image paths, and BATCH_SIZE.\n")
+            dpg.set_value(training_status_tag, "Error: Training data empty")
+            return
+        log_to_gui("Data loaded successfully.\n")
+
+        # --- 2. Model Building ---
+        log_to_gui("Building the PilotNet model...\n")
+        pilotnet_model = build_pilotnet_model(train_config.MODEL_INPUT_SHAPE)
+        log_to_gui("Model built.\n")
+
+        # --- 3. Model Compilation ---
+        log_to_gui("Compiling the model...\n")
+        pilotnet_model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=train_config.LEARNING_RATE),
+            loss="mse",
+        )
+        # Capture model summary to log
+        summary_list = []
+        pilotnet_model.summary(print_fn=lambda x: summary_list.append(x))
+        log_to_gui("Model Summary:\n" + "\n".join(summary_list) + "\n")
+
+        # --- 4. Model Training ---
+        log_to_gui(f"Starting training for {train_config.NUM_EPOCHS} epochs...\n")
+        dpg.set_value(training_status_tag, "Status: Training...")
+
+        epoch_log_callback = LambdaCallback(
+            on_epoch_end=lambda epoch, logs: log_to_gui(format_log_message(epoch, logs))
+        )
+
+        history = pilotnet_model.fit(
+            train_loader,
+            epochs=train_config.NUM_EPOCHS,
+            validation_data=(val_loader if val_loader and len(val_loader) > 0 else None),
+            verbose=0, # We use custom callback for logging
+            callbacks=[epoch_log_callback],
+        )
+        log_to_gui("Training completed.\n")
+
+        # --- 5. Model Saving ---
+        log_to_gui(f"Saving the model to: {train_config.MODEL_SAVE_PATH}...\n")
+        os.makedirs(os.path.dirname(train_config.MODEL_SAVE_PATH), exist_ok=True)
+        pilotnet_model.save(train_config.MODEL_SAVE_PATH)
+        log_to_gui("Model saved.\n")
+
+        # --- 6. Model Evaluation on Test Dataset ---
+        if test_loader and len(test_loader) > 0:
+            log_to_gui("Evaluating model on the test set...\n")
+            preds = []
+            truths = []
+            for images, labels in test_loader:
+                outputs = pilotnet_model.predict(images, verbose=0)
+                preds.extend(outputs.flatten())
+                truths.extend(labels.flatten())
+
+            plt.figure(figsize=(10, 6))
+            plt.plot(truths, label="Actual Steering Angles", alpha=0.7)
+            plt.plot(preds, label="Predicted Steering Angles", alpha=0.7)
+            plt.title("Steering Angle Prediction on Test Set")
+            plt.xlabel("Sample Index in Test Set")
+            plt.ylabel("Steering Angle")
+            plt.legend()
+            plt.grid(True)
+            
+            plot_dir = os.path.dirname(plot_save_path)
+            if plot_dir and not os.path.exists(plot_dir):
+                os.makedirs(plot_dir)
+                log_to_gui(f"Created directory for plot: {plot_dir}\n")
+            plt.savefig(plot_save_path)
+            log_to_gui(f"Evaluation plot saved to {plot_save_path}\n")
+            plt.close() 
+        else:
+            log_to_gui("INFO: No test_loader available to perform evaluation after training.\n")
+
+        log_to_gui("--- Training Process Finished Successfully ---\n")
+        dpg.set_value(training_status_tag, "Status: Completed")
+
+    except Exception as e:
+        log_to_gui(f"\n--- ERROR during training process ---\n{str(e)}\n")
+        import traceback
+        log_to_gui(traceback.format_exc() + "\n")
+        dpg.set_value(training_status_tag, "Status: Error")
+    finally:
+        dpg.configure_item(train_button_tag, enabled=True)
+
+def on_start_training_clicked():
+    data_config = dpg.get_value(data_config_path_input_tag)
+    plot_path = dpg.get_value(plot_save_path_input_tag)
+
+    if not data_config or not os.path.isfile(data_config):
+        log_to_gui("ERROR: Data Config YAML path is invalid or file does not exist.\n")
+        dpg.set_value(training_status_tag, "Error: Invalid Data Config Path")
+        return
+    if not plot_path:
+        log_to_gui("ERROR: Plot Save Path is required.\n")
+        dpg.set_value(training_status_tag, "Error: Invalid Plot Save Path")
+        return
+
+    dpg.set_value(training_log_tag, "") # Clear previous logs
+    dpg.set_value(training_status_tag, "Status: Starting...")
+    dpg.configure_item(train_button_tag, enabled=False)
+
+    thread = threading.Thread(target=run_training_thread, args=(data_config, plot_path), daemon=True)
+    thread.start()
+
+def update_training_log_display():
+    """Checks queue and updates the log display."""
+    try:
+        while not training_log_queue.empty():
+            message = training_log_queue.get_nowait()
+            current_log = dpg.get_value(training_log_tag)
+            dpg.set_value(training_log_tag, current_log + message)
+            # TODO: Add auto-scrolling
+    except queue.Empty:
+        pass
+
+def select_data_config_callback(sender, app_data):
+    dpg.set_value(data_config_path_input_tag, app_data["file_path_name"])
+
+def select_plot_save_path_callback(sender, app_data):
+    dpg.set_value(plot_save_path_input_tag, app_data["file_path_name"])
 
 
 # ---------- GUI Layout ----------
@@ -305,7 +527,7 @@ with dpg.window(
                     label="Browse", callback=lambda: dpg.show_item("folder_dialog")
                 )  # Button for browsing folder
                 dpg.add_input_text(
-                    tag="images_folder_path", width=550, readonly=True
+                    tag="images_folder_path", width=UI_INPUT_WIDTH_LONG, readonly=True
                 )  # Textbox for folder path
 
             dpg.add_text("Raw annotations file:")
@@ -314,7 +536,7 @@ with dpg.window(
                     label="Browse", callback=lambda: dpg.show_item("file_dialog")
                 )
                 dpg.add_input_text(
-                    tag="annotations_file_path", width=550, readonly=True
+                    tag="annotations_file_path", width=UI_INPUT_WIDTH_LONG, readonly=True
                 )  # Textbox for file path
 
             # Folder Dialog (for selecting folders)
@@ -393,10 +615,38 @@ with dpg.window(
                 )
 
         with dpg.tab(label="Model Training"):
-            dpg.add_text("Model training will be implemented here.")
-            dpg.add_button(
-                label="Train Model", callback=lambda: print("Model training started.")
-            )
+            dpg.add_text("Configure and start model training based on a data YAML file.")
+
+            # File Dialog for Data Config YAML
+            with dpg.file_dialog(directory_selector=False, show=False, callback=select_data_config_callback, tag="data_config_file_dialog", width=500, height=400):
+                dpg.add_file_extension(".yaml", color=(255, 255, 0, 255))
+                dpg.add_file_extension(".yml", color=(255, 255, 0, 255))
+
+            dpg.add_text("Data Configuration YAML:")
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Browse##DataConfig", callback=lambda: dpg.show_item("data_config_file_dialog"))
+                dpg.add_input_text(tag=data_config_path_input_tag, width=UI_INPUT_WIDTH_LONG - 70, hint="e.g., new_data/data.yaml")
+
+
+            with dpg.file_dialog(directory_selector=False, show=False, callback=select_plot_save_path_callback, tag="plot_save_file_dialog", width=500, height=400, default_filename="steering_angle_evaluation.png"):
+                dpg.add_file_extension(".png", color=(0, 255, 0, 255))
+                dpg.add_file_extension(".*")
+
+            dpg.add_text("Evaluation Plot Save Path:")
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Browse##PlotSave", callback=lambda: dpg.show_item("plot_save_file_dialog"))
+                dpg.add_input_text(tag=plot_save_path_input_tag, width=UI_INPUT_WIDTH_LONG - 70, default_value="plots/steering_angle_evaluation.png", hint="e.g., plots/evaluation.png")
+
+            dpg.add_spacer(height=10)
+            dpg.add_button(label="Start Model Training", tag=train_button_tag, callback=on_start_training_clicked, width = -1)
+            dpg.add_text("Status: Idle", tag=training_status_tag)
+            
+            dpg.add_spacer(height=5)
+            dpg.add_text("Training Log:")
+            dpg.add_input_text(tag=training_log_tag, multiline=True, width=-1, height=300, readonly=True, default_value="Training logs will appear here...\n")
+
+            # Timer to update logs from queue - this is one way, another is frame callback
+            # dpg.add_timer_callback(update_training_log_display, delay=100, parent=dpg.last_item()) # if tab is item
 
         with dpg.tab(label="Model Evaluation"):
             dpg.add_text("Model evaluation will be implemented here.")
@@ -412,10 +662,18 @@ with dpg.window(
                 callback=lambda: print("Model deployment started."),
             )
 
-
 # ---------- Launch ----------
 dpg.setup_dearpygui()
 dpg.show_viewport()
 
-dpg.start_dearpygui()
+# --- Explicit Render Loop (Replaces start_dearpygui) ---
+while dpg.is_dearpygui_running():
+    # Call your function directly within the loop.
+    # It will run once every frame.
+    update_training_log_display() 
+
+    # This is crucial: Renders the frame
+    dpg.render_dearpygui_frame()
+
+# This runs only after the window is closed
 dpg.destroy_context()
