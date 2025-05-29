@@ -8,8 +8,8 @@ import numpy as np
 import yaml
 import dearpygui.dearpygui as dpg
 from natsort import natsorted
-import sys # For Keras backend setting
-import importlib # For Keras backend setting
+import sys  # For Keras backend setting
+import importlib  # For Keras backend setting
 
 # --- Potentially Keras and model related imports ---
 # These will be used in the training section
@@ -19,6 +19,7 @@ import matplotlib.pyplot as plt
 from model.data_loader import create_dataloaders_from_yaml
 from model.model import build_pilotnet_model
 import model.config as train_config
+
 
 class Player:
     FRAME_DELAY_DEFAULT = 0.033  # ~30 FPS
@@ -42,6 +43,8 @@ class Player:
 
         self.images_idx_to_skip = []
         self.previous_slider_index = 0
+
+        self.skip_start_idx = -1
 
     def get_valid_frame_indices(self):
         return [
@@ -135,6 +138,24 @@ class Player:
         self.set_slider_to_frame_index(self.frame_index)
         self.load_frame(self.frame_index)
 
+    def on_jump_n_frames_fwd(self):
+        self.on_pause()
+        valid_indices = self.get_valid_frame_indices()
+        cur_idx = self.get_slider_index_from_frame_index(self.frame_index)
+        if cur_idx + dpg.get_value("n_frames_jump") < len(valid_indices):
+            self.frame_index = valid_indices[cur_idx + dpg.get_value("n_frames_jump")]
+        self.set_slider_to_frame_index(self.frame_index)
+        self.load_frame(self.frame_index)
+
+    def on_jump_n_frames_bck(self):
+        self.on_pause()
+        valid_indices = self.get_valid_frame_indices()
+        cur_idx = self.get_slider_index_from_frame_index(self.frame_index)
+        if cur_idx - dpg.get_value("n_frames_jump") >= 0:
+            self.frame_index = valid_indices[cur_idx - dpg.get_value("n_frames_jump")]
+        self.set_slider_to_frame_index(self.frame_index)
+        self.load_frame(self.frame_index)
+
     def on_playback_speed_up(self):
         if self.frame_delay > 0.001:
             self.frame_delay *= 0.7
@@ -194,6 +215,61 @@ class Player:
         slider_val = dpg.get_value("frame_slider")
         if slider_val > 0:
             dpg.set_value("frame_slider", slider_val - 1)
+
+    def on_skip_start(self):
+        self.skip_start_idx = self.frame_index
+        dpg.configure_item("skip_frames_finish", enabled=True)
+        dpg.configure_item("reset_skip_frames", enabled=True)
+
+    def on_reset_skip(self):
+        self.skip_start_idx = -1
+        dpg.configure_item("skip_frames_finish", enabled=False)
+        dpg.configure_item("reset_skip_frames", enabled=False)
+
+    def on_skip_finish(self):
+        if self.skip_start_idx == -1:
+            return
+
+        start = min(self.skip_start_idx, self.frame_index)
+        end = max(self.skip_start_idx, self.frame_index)
+
+        # Range of frames to skip
+        indices_to_skip = list(range(start, end + 1))
+        print(f"Skipping frames from {start} to {end}")
+
+        # Add to skip list (no duplicates)
+        self.images_idx_to_skip.extend(
+            [idx for idx in indices_to_skip if idx not in self.images_idx_to_skip]
+        )
+
+        # Reset skip range start
+        self.skip_start_idx = -1
+
+        # Recalculate valid frames
+        valid_indices = self.get_valid_frame_indices()
+        if not valid_indices:
+            print("No valid frames remaining.")
+            return
+
+        # Find next valid frame after the old frame_index
+        next_frame_candidates = [i for i in valid_indices if i > end]
+        if next_frame_candidates:
+            self.frame_index = next_frame_candidates[0]
+        else:
+            # If no frames after end, go to last available valid frame
+            self.frame_index = valid_indices[-1]
+
+        # Update slider and display
+        dpg.configure_item("frame_slider", max_value=len(valid_indices) - 1)
+        self.set_slider_to_frame_index(self.frame_index)
+        self.load_frame(self.frame_index)
+
+        # Disable skip controls
+        dpg.configure_item("skip_frames_finish", enabled=False)
+        dpg.configure_item("reset_skip_frames", enabled=False)
+
+        print("Currently skipped frames: ", self.images_idx_to_skip)
+        print("Slider max ", dpg.get_item_configuration("frame_slider")["max_value"])
 
 
 class DatasetPreparator(Player):
@@ -280,7 +356,7 @@ class DatasetPreparator(Player):
 
 
 APP_WINDOW_WIDTH = 660
-APP_WINDOW_HEIGHT = 770
+APP_WINDOW_HEIGHT = 800
 UI_INPUT_WIDTH_LONG = 550
 
 # --- Globals for Model Training ---
@@ -305,10 +381,12 @@ with dpg.texture_registry():
     dummy_image = np.zeros((480, 640, 4), dtype=np.float32)
     dpg.add_dynamic_texture(640, 480, dummy_image.flatten(), tag=player_texture_id)
 
+
 # ---------- Model Training Functions ----------
 def log_to_gui(message):
     """Puts a message into the training log queue."""
     training_log_queue.put(message)
+
 
 def set_keras_backend_for_app(log_fn):
     """Sets the Keras backend to 'torch' and verifies it, logging to log_fn."""
@@ -322,28 +400,35 @@ def set_keras_backend_for_app(log_fn):
         else:
             log_fn(f"Keras backend already set to '{backend_to_set}' in environment.")
 
-        if 'keras' in sys.modules:
-            importlib.reload(sys.modules['keras'])
+        if "keras" in sys.modules:
+            importlib.reload(sys.modules["keras"])
         import keras
 
         current_keras_backend = keras.backend.backend()
         log_fn(f"Keras backend in use: {current_keras_backend}")
 
         if current_keras_backend != backend_to_set:
-            log_fn(f"ERROR: Failed to set Keras backend to '{backend_to_set}'. Current backend: {current_keras_backend}")
-            log_fn("Please set the environment variable KERAS_BACKEND='torch' before running the script.")
+            log_fn(
+                f"ERROR: Failed to set Keras backend to '{backend_to_set}'. Current backend: {current_keras_backend}"
+            )
+            log_fn(
+                "Please set the environment variable KERAS_BACKEND='torch' before running the script."
+            )
             return False
         log_fn(f"Keras backend successfully configured to '{backend_to_set}'.")
         return True
     except Exception as e:
         log_fn(f"An error occurred while setting the Keras backend: {e}")
         import traceback
+
         log_fn(traceback.format_exc())
         return False
+
+
 def format_log_message(epoch, logs):
     """Formats the log message for a Keras epoch."""
-    loss_val = logs.get('loss')
-    val_loss = logs.get('val_loss')
+    loss_val = logs.get("loss")
+    val_loss = logs.get("val_loss")
 
     # Format loss, handling potential None
     loss_str = f"{loss_val:.4f}" if loss_val is not None else "N/A"
@@ -357,6 +442,7 @@ def format_log_message(epoch, logs):
         f"val_loss: {val_loss_str}\n"
     )
 
+
 def run_training_thread(data_config_path, plot_save_path):
     """The main logic for training, adapted from train.py."""
     try:
@@ -365,7 +451,7 @@ def run_training_thread(data_config_path, plot_save_path):
             dpg.set_value(training_status_tag, "Error: Keras backend")
             return
 
-        import keras # Now safe to import and use Keras
+        import keras  # Now safe to import and use Keras
         from keras.callbacks import LambdaCallback
 
         log_to_gui(f"Using data config: {data_config_path}\n")
@@ -375,18 +461,24 @@ def run_training_thread(data_config_path, plot_save_path):
         # --- 1. Data Preparation ---
         log_to_gui("Loading and preparing data...\n")
         # Note: create_dataloaders_from_yaml might print, consider capturing or modifying it
-        train_loader, val_loader, test_loader = create_dataloaders_from_yaml(data_config_path)
+        train_loader, val_loader, test_loader = create_dataloaders_from_yaml(
+            data_config_path
+        )
 
         if not train_loader and not val_loader and not test_loader:
             log_to_gui("ERROR: Failed to create any DataLoaders. Aborting.\n")
             dpg.set_value(training_status_tag, "Error: Data loading failed")
             return
         if not train_loader:
-            log_to_gui("ERROR: Failed to create training DataLoader. Aborting training.\n")
+            log_to_gui(
+                "ERROR: Failed to create training DataLoader. Aborting training.\n"
+            )
             dpg.set_value(training_status_tag, "Error: Training data missing")
             return
         if len(train_loader) == 0:
-            log_to_gui("ERROR: train_loader is empty. Check annotations, image paths, and BATCH_SIZE.\n")
+            log_to_gui(
+                "ERROR: train_loader is empty. Check annotations, image paths, and BATCH_SIZE.\n"
+            )
             dpg.set_value(training_status_tag, "Error: Training data empty")
             return
         log_to_gui("Data loaded successfully.\n")
@@ -418,8 +510,10 @@ def run_training_thread(data_config_path, plot_save_path):
         history = pilotnet_model.fit(
             train_loader,
             epochs=train_config.NUM_EPOCHS,
-            validation_data=(val_loader if val_loader and len(val_loader) > 0 else None),
-            verbose=0, # We use custom callback for logging
+            validation_data=(
+                val_loader if val_loader and len(val_loader) > 0 else None
+            ),
+            verbose=0,  # We use custom callback for logging
             callbacks=[epoch_log_callback],
         )
         log_to_gui("Training completed.\n")
@@ -448,16 +542,18 @@ def run_training_thread(data_config_path, plot_save_path):
             plt.ylabel("Steering Angle")
             plt.legend()
             plt.grid(True)
-            
+
             plot_dir = os.path.dirname(plot_save_path)
             if plot_dir and not os.path.exists(plot_dir):
                 os.makedirs(plot_dir)
                 log_to_gui(f"Created directory for plot: {plot_dir}\n")
             plt.savefig(plot_save_path)
             log_to_gui(f"Evaluation plot saved to {plot_save_path}\n")
-            plt.close() 
+            plt.close()
         else:
-            log_to_gui("INFO: No test_loader available to perform evaluation after training.\n")
+            log_to_gui(
+                "INFO: No test_loader available to perform evaluation after training.\n"
+            )
 
         log_to_gui("--- Training Process Finished Successfully ---\n")
         dpg.set_value(training_status_tag, "Status: Completed")
@@ -465,10 +561,12 @@ def run_training_thread(data_config_path, plot_save_path):
     except Exception as e:
         log_to_gui(f"\n--- ERROR during training process ---\n{str(e)}\n")
         import traceback
+
         log_to_gui(traceback.format_exc() + "\n")
         dpg.set_value(training_status_tag, "Status: Error")
     finally:
         dpg.configure_item(train_button_tag, enabled=True)
+
 
 def on_start_training_clicked():
     data_config = dpg.get_value(data_config_path_input_tag)
@@ -483,12 +581,15 @@ def on_start_training_clicked():
         dpg.set_value(training_status_tag, "Error: Invalid Plot Save Path")
         return
 
-    dpg.set_value(training_log_tag, "") # Clear previous logs
+    dpg.set_value(training_log_tag, "")  # Clear previous logs
     dpg.set_value(training_status_tag, "Status: Starting...")
     dpg.configure_item(train_button_tag, enabled=False)
 
-    thread = threading.Thread(target=run_training_thread, args=(data_config, plot_path), daemon=True)
+    thread = threading.Thread(
+        target=run_training_thread, args=(data_config, plot_path), daemon=True
+    )
     thread.start()
+
 
 def update_training_log_display():
     """Checks queue and updates the log display."""
@@ -501,8 +602,10 @@ def update_training_log_display():
     except queue.Empty:
         pass
 
+
 def select_data_config_callback(sender, app_data):
     dpg.set_value(data_config_path_input_tag, app_data["file_path_name"])
+
 
 def select_plot_save_path_callback(sender, app_data):
     dpg.set_value(plot_save_path_input_tag, app_data["file_path_name"])
@@ -536,7 +639,9 @@ with dpg.window(
                     label="Browse", callback=lambda: dpg.show_item("file_dialog")
                 )
                 dpg.add_input_text(
-                    tag="annotations_file_path", width=UI_INPUT_WIDTH_LONG, readonly=True
+                    tag="annotations_file_path",
+                    width=UI_INPUT_WIDTH_LONG,
+                    readonly=True,
                 )  # Textbox for file path
 
             # Folder Dialog (for selecting folders)
@@ -578,10 +683,10 @@ with dpg.window(
                 dpg.add_button(label="Play", callback=dataset_preparator.on_play)
                 dpg.add_button(label="Pause", callback=dataset_preparator.on_pause)
                 dpg.add_button(
-                    label="Step Forward", callback=dataset_preparator.on_step_forward
+                    label="Step Back", callback=dataset_preparator.on_step_back
                 )
                 dpg.add_button(
-                    label="Step Back", callback=dataset_preparator.on_step_back
+                    label="Step Forward", callback=dataset_preparator.on_step_forward
                 )
                 dpg.add_button(
                     label="Speed Up", callback=dataset_preparator.on_playback_speed_up
@@ -589,6 +694,40 @@ with dpg.window(
                 dpg.add_button(
                     label="Speed Reset",
                     callback=dataset_preparator.on_playback_speed_reset,
+                )
+
+            with dpg.group(horizontal=True):
+                dpg.add_text("N =")
+                dpg.add_input_int(tag="n_frames_jump", width=100, default_value=100)
+                dpg.add_button(
+                    label="Jump N Frames Back",
+                    tag="jump_n_frames_bck",
+                    callback=dataset_preparator.on_jump_n_frames_bck,
+                )
+                dpg.add_button(
+                    label="Jump N Frames Forward",
+                    tag="jump_n_frames_fwd",
+                    callback=dataset_preparator.on_jump_n_frames_fwd,
+                )
+
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Remove from this frame...",
+                    tag="skip_frames_start",
+                    callback=dataset_preparator.on_skip_start,
+                )
+                dpg.add_button(
+                    label="Remove to this frame",
+                    tag="skip_frames_finish",
+                    callback=dataset_preparator.on_skip_finish,
+                    enabled=False,
+                )
+
+                dpg.add_button(
+                    label="Reset range removal",
+                    tag="reset_skip_frames",
+                    callback=dataset_preparator.on_reset_skip,
+                    enabled=False,
                 )
 
             with dpg.group(horizontal=True):
@@ -615,35 +754,78 @@ with dpg.window(
                 )
 
         with dpg.tab(label="Model Training"):
-            dpg.add_text("Configure and start model training based on a data YAML file.")
+            dpg.add_text(
+                "Configure and start model training based on a data YAML file."
+            )
 
             # File Dialog for Data Config YAML
-            with dpg.file_dialog(directory_selector=False, show=False, callback=select_data_config_callback, tag="data_config_file_dialog", width=500, height=400):
+            with dpg.file_dialog(
+                directory_selector=False,
+                show=False,
+                callback=select_data_config_callback,
+                tag="data_config_file_dialog",
+                width=500,
+                height=400,
+            ):
                 dpg.add_file_extension(".yaml", color=(255, 255, 0, 255))
                 dpg.add_file_extension(".yml", color=(255, 255, 0, 255))
 
             dpg.add_text("Data Configuration YAML:")
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Browse##DataConfig", callback=lambda: dpg.show_item("data_config_file_dialog"))
-                dpg.add_input_text(tag=data_config_path_input_tag, width=UI_INPUT_WIDTH_LONG - 70, hint="e.g., new_data/data.yaml")
+                dpg.add_button(
+                    label="Browse##DataConfig",
+                    callback=lambda: dpg.show_item("data_config_file_dialog"),
+                )
+                dpg.add_input_text(
+                    tag=data_config_path_input_tag,
+                    width=UI_INPUT_WIDTH_LONG - 70,
+                    hint="e.g., new_data/data.yaml",
+                )
 
-
-            with dpg.file_dialog(directory_selector=False, show=False, callback=select_plot_save_path_callback, tag="plot_save_file_dialog", width=500, height=400, default_filename="steering_angle_evaluation.png"):
+            with dpg.file_dialog(
+                directory_selector=False,
+                show=False,
+                callback=select_plot_save_path_callback,
+                tag="plot_save_file_dialog",
+                width=500,
+                height=400,
+                default_filename="steering_angle_evaluation.png",
+            ):
                 dpg.add_file_extension(".png", color=(0, 255, 0, 255))
                 dpg.add_file_extension(".*")
 
             dpg.add_text("Evaluation Plot Save Path:")
             with dpg.group(horizontal=True):
-                dpg.add_button(label="Browse##PlotSave", callback=lambda: dpg.show_item("plot_save_file_dialog"))
-                dpg.add_input_text(tag=plot_save_path_input_tag, width=UI_INPUT_WIDTH_LONG - 70, default_value="plots/steering_angle_evaluation.png", hint="e.g., plots/evaluation.png")
+                dpg.add_button(
+                    label="Browse##PlotSave",
+                    callback=lambda: dpg.show_item("plot_save_file_dialog"),
+                )
+                dpg.add_input_text(
+                    tag=plot_save_path_input_tag,
+                    width=UI_INPUT_WIDTH_LONG - 70,
+                    default_value="plots/steering_angle_evaluation.png",
+                    hint="e.g., plots/evaluation.png",
+                )
 
             dpg.add_spacer(height=10)
-            dpg.add_button(label="Start Model Training", tag=train_button_tag, callback=on_start_training_clicked, width = -1)
+            dpg.add_button(
+                label="Start Model Training",
+                tag=train_button_tag,
+                callback=on_start_training_clicked,
+                width=-1,
+            )
             dpg.add_text("Status: Idle", tag=training_status_tag)
-            
+
             dpg.add_spacer(height=5)
             dpg.add_text("Training Log:")
-            dpg.add_input_text(tag=training_log_tag, multiline=True, width=-1, height=300, readonly=True, default_value="Training logs will appear here...\n")
+            dpg.add_input_text(
+                tag=training_log_tag,
+                multiline=True,
+                width=-1,
+                height=300,
+                readonly=True,
+                default_value="Training logs will appear here...\n",
+            )
 
             # Timer to update logs from queue - this is one way, another is frame callback
             # dpg.add_timer_callback(update_training_log_display, delay=100, parent=dpg.last_item()) # if tab is item
@@ -670,7 +852,7 @@ dpg.show_viewport()
 while dpg.is_dearpygui_running():
     # Call your function directly within the loop.
     # It will run once every frame.
-    update_training_log_display() 
+    update_training_log_display()
 
     # This is crucial: Renders the frame
     dpg.render_dearpygui_frame()
