@@ -24,7 +24,9 @@ import model.config as train_config
 class Player:
     FRAME_DELAY_DEFAULT = 0.033  # ~30 FPS
 
-    def __init__(self, texture_id, image_folder=""):
+    def __init__(self, texture_id, image_folder="", namespace=""):
+        self.namespace = namespace
+
         if image_folder == "":
             self.image_paths = []
             self.images_folder = ""
@@ -32,9 +34,10 @@ class Player:
             self.image_paths = natsorted(glob.glob(os.path.join(image_folder, "*.jpg")))
             self.images_folder = image_folder
             dpg.configure_item(
-                "frame_slider", max_value=len(self.get_valid_frame_indices()) - 1
+                self.tag_with_namespace("frame_slider"),
+                max_value=len(self.get_valid_frame_indices()) - 1,
             )
-            dpg.configure_item("frame_slider", enabled=True)
+            dpg.configure_item(self.tag_with_namespace("frame_slider"), enabled=True)
 
         self.texture_id = texture_id
         self.frame_delay = self.FRAME_DELAY_DEFAULT
@@ -45,6 +48,12 @@ class Player:
         self.previous_slider_index = 0
 
         self.skip_start_idx = -1
+
+    def tag_with_namespace(self, tag):
+        if not self.namespace:
+            return tag
+        else:
+            return self.namespace + "::" + tag
 
     def get_valid_frame_indices(self):
         return [
@@ -98,19 +107,20 @@ class Player:
         self.images_idx_to_skip = []
         self.frame_index = 0
         dpg.configure_item(
-            "frame_slider", max_value=self.get_number_of_valid_frames() - 1
+            self.tag_with_namespace("frame_slider"),
+            max_value=self.get_number_of_valid_frames() - 1,
         )
-        dpg.set_value("frame_slider", 0)
-        dpg.configure_item("frame_slider", enabled=True)
-        dpg.set_value("images_folder_path", app_data["file_path_name"])
+        dpg.set_value(self.tag_with_namespace("frame_slider"), 0)
+        dpg.configure_item(self.tag_with_namespace("frame_slider"), enabled=True)
+        dpg.set_value(
+            self.tag_with_namespace("images_folder_path"), app_data["file_path_name"]
+        )
 
     def on_player_slider_change(self, sender, app_data, user_data):
         self.on_pause()
-        print("Raw slider value is ", app_data)
         self.frame_index = self.get_frame_index_from_slider_index(app_data)
         self.load_frame(self.frame_index)
         self.previous_slider_index = app_data
-        print("Set frame index via slider to ", self.frame_index)
 
     def on_play(self):
         if not self.playing and self.get_number_of_valid_frames() > 0:
@@ -142,8 +152,12 @@ class Player:
         self.on_pause()
         valid_indices = self.get_valid_frame_indices()
         cur_idx = self.get_slider_index_from_frame_index(self.frame_index)
-        if cur_idx + dpg.get_value("n_frames_jump") < len(valid_indices):
-            self.frame_index = valid_indices[cur_idx + dpg.get_value("n_frames_jump")]
+        if cur_idx + dpg.get_value(self.tag_with_namespace("n_frames_jump")) < len(
+            valid_indices
+        ):
+            self.frame_index = valid_indices[
+                cur_idx + dpg.get_value(self.tag_with_namespace("n_frames_jump"))
+            ]
         self.set_slider_to_frame_index(self.frame_index)
         self.load_frame(self.frame_index)
 
@@ -151,8 +165,10 @@ class Player:
         self.on_pause()
         valid_indices = self.get_valid_frame_indices()
         cur_idx = self.get_slider_index_from_frame_index(self.frame_index)
-        if cur_idx - dpg.get_value("n_frames_jump") >= 0:
-            self.frame_index = valid_indices[cur_idx - dpg.get_value("n_frames_jump")]
+        if cur_idx - dpg.get_value(self.tag_with_namespace("n_frames_jump")) >= 0:
+            self.frame_index = valid_indices[
+                cur_idx - dpg.get_value(self.tag_with_namespace("n_frames_jump"))
+            ]
         self.set_slider_to_frame_index(self.frame_index)
         self.load_frame(self.frame_index)
 
@@ -172,7 +188,10 @@ class Player:
             self.images_idx_to_skip.append(self.frame_index)
 
             valid_indices = self.get_valid_frame_indices()
-            dpg.configure_item("frame_slider", max_value=len(valid_indices) - 1)
+            dpg.configure_item(
+                self.tag_with_namespace("frame_slider"),
+                max_value=len(valid_indices) - 1,
+            )
 
             # Decide new frame index:
             if current_valid_idx < len(valid_indices):
@@ -189,42 +208,48 @@ class Player:
 
             print("Currently skipped frames: ", self.images_idx_to_skip)
             print(
-                "Slider max ", dpg.get_item_configuration("frame_slider")["max_value"]
+                "Slider max ",
+                dpg.get_item_configuration(self.tag_with_namespace("frame_slider"))[
+                    "max_value"
+                ],
             )
 
     def on_undo_last_frame_remove(self):
         if len(self.images_idx_to_skip) > 0:
             self.images_idx_to_skip.pop()
             dpg.configure_item(
-                "frame_slider", max_value=self.get_number_of_valid_frames() - 1
+                self.tag_with_namespace("frame_slider"),
+                max_value=self.get_number_of_valid_frames() - 1,
             )
             self.set_slider_to_frame_index(self.frame_index)
             print("Currently skipped frames: ", self.images_idx_to_skip)
 
     def set_slider_to_frame_index(self, frame_index):
         slider_index = self.get_slider_index_from_frame_index(frame_index)
-        dpg.set_value("frame_slider", slider_index)
+        dpg.set_value(self.tag_with_namespace("frame_slider"), slider_index)
 
     def increment_slider(self):
-        slider_val = dpg.get_value("frame_slider")
-        max_val = dpg.get_item_configuration("frame_slider")["max_value"]
+        slider_val = dpg.get_value(self.tag_with_namespace("frame_slider"))
+        max_val = dpg.get_item_configuration(self.tag_with_namespace("frame_slider"))[
+            "max_value"
+        ]
         if slider_val < max_val:
-            dpg.set_value("frame_slider", slider_val + 1)
+            dpg.set_value(self.tag_with_namespace("frame_slider"), slider_val + 1)
 
     def decrement_slider(self):
-        slider_val = dpg.get_value("frame_slider")
+        slider_val = dpg.get_value(self.tag_with_namespace("frame_slider"))
         if slider_val > 0:
-            dpg.set_value("frame_slider", slider_val - 1)
+            dpg.set_value(self.tag_with_namespace("frame_slider"), slider_val - 1)
 
     def on_skip_start(self):
         self.skip_start_idx = self.frame_index
-        dpg.configure_item("skip_frames_finish", enabled=True)
-        dpg.configure_item("reset_skip_frames", enabled=True)
+        dpg.configure_item(self.tag_with_namespace("skip_frames_finish"), enabled=True)
+        dpg.configure_item(self.tag_with_namespace("reset_skip_frames"), enabled=True)
 
     def on_reset_skip(self):
         self.skip_start_idx = -1
-        dpg.configure_item("skip_frames_finish", enabled=False)
-        dpg.configure_item("reset_skip_frames", enabled=False)
+        dpg.configure_item(self.tag_with_namespace("skip_frames_finish"), enabled=False)
+        dpg.configure_item(self.tag_with_namespace("reset_skip_frames"), enabled=False)
 
     def on_skip_finish(self):
         if self.skip_start_idx == -1:
@@ -260,21 +285,30 @@ class Player:
             self.frame_index = valid_indices[-1]
 
         # Update slider and display
-        dpg.configure_item("frame_slider", max_value=len(valid_indices) - 1)
+        dpg.configure_item(
+            self.tag_with_namespace("frame_slider"), max_value=len(valid_indices) - 1
+        )
         self.set_slider_to_frame_index(self.frame_index)
         self.load_frame(self.frame_index)
 
         # Disable skip controls
-        dpg.configure_item("skip_frames_finish", enabled=False)
-        dpg.configure_item("reset_skip_frames", enabled=False)
+        dpg.configure_item(self.tag_with_namespace("skip_frames_finish"), enabled=False)
+        dpg.configure_item(self.tag_with_namespace("reset_skip_frames"), enabled=False)
 
         print("Currently skipped frames: ", self.images_idx_to_skip)
-        print("Slider max ", dpg.get_item_configuration("frame_slider")["max_value"])
+        print(
+            "Slider max ",
+            dpg.get_item_configuration(self.tag_with_namespace("frame_slider"))[
+                "max_value"
+            ],
+        )
 
 
 class DatasetPreparator(Player):
-    def __init__(self, texture_id, image_folder="", image_annotations_file=""):
-        super().__init__(texture_id, image_folder)
+    def __init__(
+        self, texture_id, image_folder="", image_annotations_file="", namespace=""
+    ):
+        super().__init__(texture_id, image_folder, namespace)
         self.image_annotations_file = image_annotations_file
 
         self.test_set_idx_start = None
@@ -284,7 +318,7 @@ class DatasetPreparator(Player):
             directory_selector=False,
             show=False,
             callback=self.save_file_with_dataset_metadata,
-            id="save_file_dialog",
+            id=self.tag_with_namespace("save_file_dialog"),
             width=500,
             height=400,
         ):
@@ -294,15 +328,19 @@ class DatasetPreparator(Player):
             label="Error",
             modal=True,
             show=False,
-            tag="error_popup",
+            tag=self.tag_with_namespace("error_popup"),
             no_title_bar=True,
             width=400,
             height=100,
         ):
-            dpg.add_text("", tag="error_message_text")  # Placeholder for the message
+            dpg.add_text(
+                "", tag=self.tag_with_namespace("error_message_text")
+            )  # Placeholder for the message
             dpg.add_spacer(height=10)
             dpg.add_button(
-                label="Close", width=75, callback=lambda: dpg.hide_item("error_popup")
+                label="Close",
+                width=75,
+                callback=lambda: dpg.hide_item(self.tag_with_namespace("error_popup")),
             )
 
     def set_raw_data_folder(self, raw_data_folder):
@@ -311,7 +349,7 @@ class DatasetPreparator(Player):
     def on_image_annotations_file_selected(self, sender, app_data, user_data):
         print("Selected image annotations file: ", app_data["file_path_name"])
         self.image_annotations_file = app_data["file_path_name"]
-        dpg.set_value("annotations_file_path", app_data["file_path_name"])
+        dpg.set_value("preparator::annotations_file_path", app_data["file_path_name"])
 
     def on_test_dataset_start(self):
         self.test_set_idx_start = self.frame_index
@@ -336,7 +374,7 @@ class DatasetPreparator(Player):
             )
             return
 
-        dpg.show_item("save_file_dialog")
+        dpg.show_item(self.tag_with_namespace("save_file_dialog"))
 
     def save_file_with_dataset_metadata(self, sender, app_data):
         data = {
@@ -350,9 +388,9 @@ class DatasetPreparator(Player):
             yaml.dump(data, f, default_flow_style=False)
 
     def show_error_popup(self, message):
-        dpg.set_value("error_message_text", message)
-        dpg.set_item_pos("error_popup", (150, 150))
-        dpg.show_item("error_popup")
+        dpg.set_value(self.tag_with_namespace("error_message_text"), message)
+        dpg.set_item_pos(self.tag_with_namespace("error_popup"), (150, 150))
+        dpg.show_item(self.tag_with_namespace("error_popup"))
 
 
 APP_WINDOW_WIDTH = 660
@@ -377,9 +415,17 @@ dpg.create_viewport(
 )
 
 with dpg.texture_registry():
-    player_texture_id = dpg.generate_uuid()
     dummy_image = np.zeros((480, 640, 4), dtype=np.float32)
-    dpg.add_dynamic_texture(640, 480, dummy_image.flatten(), tag=player_texture_id)
+
+    preparator_player_texture_id = dpg.generate_uuid()
+    dpg.add_dynamic_texture(
+        640, 480, dummy_image.flatten(), tag=preparator_player_texture_id
+    )
+
+    evaluator_player_texture_id = dpg.generate_uuid()
+    dpg.add_dynamic_texture(
+        640, 480, dummy_image.flatten(), tag=evaluator_player_texture_id
+    )
 
 
 # ---------- Model Training Functions ----------
@@ -621,25 +667,31 @@ with dpg.window(
 
         with dpg.tab(label="Data Preparation"):
 
-            dataset_preparator = DatasetPreparator(player_texture_id)
+            dataset_preparator = DatasetPreparator(
+                preparator_player_texture_id, namespace="preparator"
+            )
 
             # File and Folder Browsing Controls
             dpg.add_text("Raw images folder:")
             with dpg.group(horizontal=True):
                 dpg.add_button(
-                    label="Browse", callback=lambda: dpg.show_item("folder_dialog")
+                    label="Browse",
+                    callback=lambda: dpg.show_item("preparator::folder_dialog"),
                 )  # Button for browsing folder
                 dpg.add_input_text(
-                    tag="images_folder_path", width=UI_INPUT_WIDTH_LONG, readonly=True
+                    tag="preparator::images_folder_path",
+                    width=UI_INPUT_WIDTH_LONG,
+                    readonly=True,
                 )  # Textbox for folder path
 
             dpg.add_text("Raw annotations file:")
             with dpg.group(horizontal=True):
                 dpg.add_button(
-                    label="Browse", callback=lambda: dpg.show_item("file_dialog")
+                    label="Browse",
+                    callback=lambda: dpg.show_item("preparator::file_dialog"),
                 )
                 dpg.add_input_text(
-                    tag="annotations_file_path",
+                    tag="preparator::annotations_file_path",
                     width=UI_INPUT_WIDTH_LONG,
                     readonly=True,
                 )  # Textbox for file path
@@ -648,7 +700,7 @@ with dpg.window(
             with dpg.file_dialog(
                 directory_selector=True,
                 show=False,
-                tag="folder_dialog",
+                tag="preparator::folder_dialog",
                 callback=dataset_preparator.on_folder_selected,
                 width=500,
                 height=400,
@@ -659,17 +711,17 @@ with dpg.window(
             with dpg.file_dialog(
                 directory_selector=False,
                 show=False,
-                tag="file_dialog",
+                tag="preparator::file_dialog",
                 callback=dataset_preparator.on_image_annotations_file_selected,
                 width=500,
                 height=400,
             ):
                 dpg.add_file_extension(".txt")
 
-            dpg.add_image(player_texture_id)
+            dpg.add_image(preparator_player_texture_id)
 
             dpg.add_slider_int(
-                tag="frame_slider",
+                tag="preparator::frame_slider",
                 label="",
                 min_value=0,
                 max_value=0,
@@ -698,34 +750,36 @@ with dpg.window(
 
             with dpg.group(horizontal=True):
                 dpg.add_text("N =")
-                dpg.add_input_int(tag="n_frames_jump", width=100, default_value=100)
+                dpg.add_input_int(
+                    tag="preparator::n_frames_jump", width=100, default_value=100
+                )
                 dpg.add_button(
                     label="Jump N Frames Back",
-                    tag="jump_n_frames_bck",
+                    tag="preparator::jump_n_frames_bck",
                     callback=dataset_preparator.on_jump_n_frames_bck,
                 )
                 dpg.add_button(
                     label="Jump N Frames Forward",
-                    tag="jump_n_frames_fwd",
+                    tag="preparator::jump_n_frames_fwd",
                     callback=dataset_preparator.on_jump_n_frames_fwd,
                 )
 
             with dpg.group(horizontal=True):
                 dpg.add_button(
                     label="Remove from this frame...",
-                    tag="skip_frames_start",
+                    tag="preparator::skip_frames_start",
                     callback=dataset_preparator.on_skip_start,
                 )
                 dpg.add_button(
                     label="Remove to this frame",
-                    tag="skip_frames_finish",
+                    tag="preparator::skip_frames_finish",
                     callback=dataset_preparator.on_skip_finish,
                     enabled=False,
                 )
 
                 dpg.add_button(
                     label="Reset range removal",
-                    tag="reset_skip_frames",
+                    tag="preparator::reset_skip_frames",
                     callback=dataset_preparator.on_reset_skip,
                     enabled=False,
                 )
