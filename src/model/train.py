@@ -1,35 +1,14 @@
 import os
-import keras  # Keras 3.0
+import torch
+import torch.nn as nn
+import torch.optim as optim
 
 # Imports from local modules
 import argparse
 import config
 import matplotlib.pyplot as plt
 from data_loader import create_dataloaders_from_yaml # Updated import
-from model import build_pilotnet_model
-from tensorflow.keras.models import load_model
-
-
-def set_keras_backend():
-    """Sets the Keras backend and verifies it."""
-    try:
-        if os.environ.get("KERAS_BACKEND") != "torch":
-            print("Setting Keras backend to 'torch'...")
-            os.environ["KERAS_BACKEND"] = "torch"
-
-        import keras as current_keras_instance
-
-        print(f"Keras backend in use: {current_keras_instance.backend.backend()}")
-        if current_keras_instance.backend.backend() != "torch":
-            print("ERROR: Failed to set Keras backend to 'torch'.")
-            print(
-                "Please set the environment variable KERAS_BACKEND='torch' before running the script."
-            )
-            return False
-        return True
-    except Exception as e:
-        print(f"An error occurred while setting the Keras backend: {e}")
-        return False
+from model import build_pilotnet_model # This will now return a PyTorch model
 
 
 def main():
@@ -54,6 +33,9 @@ def main():
         help="Path to save the evaluation plot (e.g., plots/evaluation.png).",
     )
     args = parser.parse_args()
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
     pilotnet_model = None
 
@@ -84,41 +66,81 @@ def main():
 
         # --- 2. Model Building ---
         print("Building the PilotNet model...")
-        pilotnet_model = build_pilotnet_model(config.MODEL_INPUT_SHAPE)
+        pilotnet_model = build_pilotnet_model(input_channels=config.IMG_CHANNELS)
+        pilotnet_model.to(device)
+        print("Model Summary:\n", pilotnet_model)
 
         # --- 3. Model Compilation ---
-        print("Compiling the model...")
-        pilotnet_model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=config.LEARNING_RATE),
-            loss="mse",  # Mean Squared Error for regression
-        )
-        pilotnet_model.summary()
+        print("Setting up optimizer and loss function...")
+        optimizer = optim.Adam(pilotnet_model.parameters(), lr=config.LEARNING_RATE)
+        criterion = nn.MSELoss()
 
         # --- 4. Model Training ---
         print(f"\nStarting training for {config.NUM_EPOCHS} epochs...")
-        try:
-            history = pilotnet_model.fit(
-                train_loader,
-                epochs=config.NUM_EPOCHS,
-                validation_data=(
-                    val_loader if val_loader and len(val_loader) > 0 else None
-                ),  # Pass only if val_loader exists and is not empty
-                verbose=1,  # 0 = silent, 1 = progress bar, 2 = one line per epoch
-            )
-            print("\nTraining completed.")
+        best_val_loss = float('inf')
+        # For simplicity, train.py won't implement early stopping patience from GUI
+        # but will save the best model based on val_loss if val_loader is present.
 
-            # --- 5. Model Saving ---
-            print(f"Saving the model to: {config.MODEL_SAVE_PATH}...")
-            pilotnet_model.save(config.MODEL_SAVE_PATH)
-            print("Model saved.")
+        try:
+            for epoch in range(config.NUM_EPOCHS):
+                pilotnet_model.train()
+                running_loss = 0.0
+                for i, (inputs, labels) in enumerate(train_loader):
+                    inputs, labels = inputs.to(device), labels.to(device)
+                    optimizer.zero_grad()
+                    outputs = pilotnet_model(inputs)
+                    loss = criterion(outputs, labels)
+                    loss.backward()
+                    optimizer.step()
+                    running_loss += loss.item()
+                
+                avg_train_loss = running_loss / len(train_loader)
+                log_msg = f"Epoch {epoch+1}/{config.NUM_EPOCHS} - loss: {avg_train_loss:.4f}"
+
+                if val_loader and len(val_loader) > 0:
+                    pilotnet_model.eval()
+                    val_running_loss = 0.0
+                    with torch.no_grad():
+                        for inputs_val, labels_val in val_loader:
+                            inputs_val, labels_val = inputs_val.to(device), labels_val.to(device)
+                            outputs_val = pilotnet_model(inputs_val)
+                            loss_val = criterion(outputs_val, labels_val)
+                            val_running_loss += loss_val.item()
+                    avg_val_loss = val_running_loss / len(val_loader)
+                    log_msg += f" - val_loss: {avg_val_loss:.4f}"
+
+                    if avg_val_loss < best_val_loss:
+                        best_val_loss = avg_val_loss
+                        torch.save(pilotnet_model.state_dict(), config.MODEL_SAVE_PATH)
+                        log_msg += " (New best model saved)"
+                else: # No validation loader, save at the end
+                    if epoch == config.NUM_EPOCHS - 1:
+                        torch.save(pilotnet_model.state_dict(), config.MODEL_SAVE_PATH)
+                        log_msg += " (Model saved at end of training)"
+                
+                print(log_msg)
+
+            print("\nTraining completed.")
+            if not (val_loader and len(val_loader) > 0): # If no val_loader, best_val_loss is inf
+                 if os.path.exists(config.MODEL_SAVE_PATH):
+                    print(f"Model saved to: {config.MODEL_SAVE_PATH}")
+            elif best_val_loss != float('inf'):
+                print(f"Best model (val_loss: {best_val_loss:.4f}) saved to: {config.MODEL_SAVE_PATH}")
 
         except Exception as e:
             print(f"\nAn error occurred during training or saving the model: {e}")
             import traceback
-
             traceback.print_exc()
+            return # Exit if training failed
+
     elif args.mode == "test":
-        pilotnet_model = load_model(config.MODEL_SAVE_PATH)
+        if not os.path.exists(config.MODEL_SAVE_PATH):
+            print(f"ERROR: Model file not found at {config.MODEL_SAVE_PATH} for testing.")
+            return
+        pilotnet_model = build_pilotnet_model(input_channels=config.IMG_CHANNELS)
+        pilotnet_model.load_state_dict(torch.load(config.MODEL_SAVE_PATH, map_location=device))
+        pilotnet_model.to(device)
+        print(f"Loaded model from {config.MODEL_SAVE_PATH} for testing.")
 
     # --- 6. Model Evaluation on Test Dataset ---
     if test_loader and len(test_loader) > 0:
@@ -126,10 +148,13 @@ def main():
         preds = []
         truths = []
 
-        for images, labels in test_loader:
-            outputs = pilotnet_model.predict(images, verbose=0)
-            preds.extend(outputs.flatten())
-            truths.extend(labels.flatten())
+        pilotnet_model.eval()
+        with torch.no_grad():
+            for images, labels in test_loader:
+                images = images.to(device)
+                outputs = pilotnet_model(images)
+                preds.extend(outputs.cpu().numpy().flatten())
+                truths.extend(labels.numpy().flatten())
 
         # Plot predictions vs actual steering angles
         plt.figure(figsize=(10, 6))

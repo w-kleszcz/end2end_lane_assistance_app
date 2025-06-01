@@ -8,16 +8,14 @@ import numpy as np
 import yaml
 import dearpygui.dearpygui as dpg
 from natsort import natsorted
-import sys  # For Keras backend setting
-import importlib  # For Keras backend setting
 
-# --- Potentially Keras and model related imports ---
-# These will be used in the training section
-# import keras # Import later after backend is set or within training function
+import torch
+import torch.nn as nn
+import torch.optim as optim
 import matplotlib.pyplot as plt
 
 from model.data_loader import create_dataloaders_from_yaml
-from model.model import build_pilotnet_model, build_pilotnet_model_v_elu_dropout
+from model.model import build_pilotnet_model
 import model.config as global_train_config # For default values
 
 
@@ -443,43 +441,6 @@ def log_to_gui(message):
     training_log_queue.put(message)
 
 
-def set_keras_backend_for_app(log_fn):
-    """Sets the Keras backend to 'torch' and verifies it, logging to log_fn."""
-    try:
-        backend_to_set = "torch"
-        current_env_backend = os.environ.get("KERAS_BACKEND")
-
-        if current_env_backend != backend_to_set:
-            log_fn(f"Attempting to set Keras backend to '{backend_to_set}'...")
-            os.environ["KERAS_BACKEND"] = backend_to_set
-        else:
-            log_fn(f"Keras backend already set to '{backend_to_set}' in environment.")
-
-        if "keras" in sys.modules:
-            importlib.reload(sys.modules["keras"])
-        import keras
-
-        current_keras_backend = keras.backend.backend()
-        log_fn(f"Keras backend in use: {current_keras_backend}")
-
-        if current_keras_backend != backend_to_set:
-            log_fn(
-                f"ERROR: Failed to set Keras backend to '{backend_to_set}'. Current backend: {current_keras_backend}"
-            )
-            log_fn(
-                "Please set the environment variable KERAS_BACKEND='torch' before running the script."
-            )
-            return False
-        log_fn(f"Keras backend successfully configured to '{backend_to_set}'.")
-        return True
-    except Exception as e:
-        log_fn(f"An error occurred while setting the Keras backend: {e}")
-        import traceback
-
-        log_fn(traceback.format_exc())
-        return False
-
-
 def format_log_message(epoch, logs, total_epochs):
     """Formats the log message for a Keras epoch."""
     loss_val = logs.get("loss")
@@ -512,6 +473,10 @@ def run_training_thread(
 ):
     """The main logic for training, adapted from train.py."""
     try:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        log_to_gui(f"Using device: {device}\n")
+
+
         log_to_gui("--- Training Process Started ---\n")
         log_to_gui(f"Using data config: {data_config_path}\n")
         log_to_gui(f"Evaluation plot will be saved to: {plot_save_path}\n")
@@ -525,13 +490,6 @@ def run_training_thread(
         log_to_gui(f"  Num Workers: {num_workers}\n")
         log_to_gui(f"  Early Stopping Patience: {early_stopping_patience}\n\n")
 
-        if not set_keras_backend_for_app(log_to_gui):
-            dpg.set_value(training_status_tag, "Error: Keras backend")
-            return
-
-        import keras  # Now safe to import and use Keras
-        from keras.callbacks import LambdaCallback, ModelCheckpoint, EarlyStopping
-        
         # --- 1. Data Preparation ---
         log_to_gui("Loading and preparing data...\n")
         # Note: create_dataloaders_from_yaml might print, consider capturing or modifying it
@@ -563,72 +521,96 @@ def run_training_thread(
 
         # --- 2. Model Building ---
         log_to_gui("Building the PilotNet model...\n")
-        pilotnet_model = build_pilotnet_model(global_train_config.MODEL_INPUT_SHAPE)
+        # Use IMG_CHANNELS for PyTorch model constructor
+        pilotnet_model = build_pilotnet_model(input_channels=global_train_config.IMG_CHANNELS)
+        pilotnet_model.to(device)
         log_to_gui("Model built.\n")
+        log_to_gui("Model Summary:\n" + str(pilotnet_model) + "\n")
 
         # --- 3. Model Compilation ---
-        log_to_gui("Compiling the model...\n")
-        pilotnet_model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
-            loss="mse",
-        )
-        # Capture model summary to log
-        summary_list = []
-        pilotnet_model.summary(print_fn=lambda x: summary_list.append(x))
-        log_to_gui("Model Summary:\n" + "\n".join(summary_list) + "\n")
+        log_to_gui("Setting up optimizer and loss function...\n")
+        optimizer = optim.Adam(pilotnet_model.parameters(), lr=learning_rate)
+        criterion = nn.MSELoss()
+        log_to_gui("Optimizer and loss function set up.\n")
         
         # --- 4. Model Training ---
         log_to_gui(f"Starting training for {num_epochs} epochs...\n")
         dpg.set_value(training_status_tag, "Status: Training...")
 
-        epoch_log_callback = LambdaCallback(
-            on_epoch_end=lambda epoch, logs: log_to_gui(
-                format_log_message(epoch, logs, num_epochs)
-            )
-        )
-
-        # Callback to save the best model
-        # Ensure the directory for model_save_path exists for ModelCheckpoint
         os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
-        model_checkpoint_callback = ModelCheckpoint(
-            filepath=model_save_path,
-            save_best_only=True,
-            monitor='val_loss',
-            mode='min',
-            verbose=1 # Logs a message when the model is saved
-        )
 
-        # Callback for Early Stopping
-        early_stopping_callback = EarlyStopping(
-            monitor='val_loss',
-            patience=early_stopping_patience,
-            verbose=1,
-            mode='min',
-            restore_best_weights=True # Restores model weights from the epoch with the best value of the monitored quantity.
-        )
-        
-        history = pilotnet_model.fit(
-            train_loader,
-            epochs=num_epochs,
-            validation_data=(
-                val_loader if val_loader and len(val_loader) > 0 else None
-            ),
-            verbose=0,  # We use custom callback for logging
-            callbacks=[epoch_log_callback, model_checkpoint_callback, early_stopping_callback],
-        )
+        best_val_loss = float('inf')
+        epochs_no_improve = 0
+        stopped_epoch_num = 0 # For logging early stopping
+
+        for epoch in range(num_epochs):
+            pilotnet_model.train() # Set model to training mode
+            running_loss = 0.0
+            for i, (inputs, labels) in enumerate(train_loader):
+                inputs, labels = inputs.to(device), labels.to(device)
+
+                optimizer.zero_grad()
+                outputs = pilotnet_model(inputs)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
+                running_loss += loss.item()
+            
+            avg_train_loss = running_loss / len(train_loader)
+            current_logs = {'loss': avg_train_loss}
+
+            # Validation loop
+            avg_val_loss = None
+            if val_loader and len(val_loader) > 0:
+                pilotnet_model.eval() # Set model to evaluation mode
+                val_running_loss = 0.0
+                with torch.no_grad():
+                    for inputs_val, labels_val in val_loader:
+                        inputs_val, labels_val = inputs_val.to(device), labels_val.to(device)
+                        outputs_val = pilotnet_model(inputs_val)
+                        loss_val = criterion(outputs_val, labels_val)
+                        val_running_loss += loss_val.item()
+                avg_val_loss = val_running_loss / len(val_loader)
+                current_logs['val_loss'] = avg_val_loss
+                log_to_gui(format_log_message(epoch, current_logs, num_epochs))
+
+                # ModelCheckpoint (save_best_only) logic
+                if avg_val_loss < best_val_loss:
+                    best_val_loss = avg_val_loss
+                    torch.save(pilotnet_model.state_dict(), model_save_path)
+                    log_to_gui(f"Epoch {epoch+1}: val_loss improved to {avg_val_loss:.4f}, model saved to {model_save_path}\n")
+                    epochs_no_improve = 0
+                else:
+                    epochs_no_improve += 1
+                    log_to_gui(f"Epoch {epoch+1}: val_loss ({avg_val_loss:.4f}) did not improve from {best_val_loss:.4f}.\n")
+                
+                # EarlyStopping logic
+                if early_stopping_patience > 0 and epochs_no_improve >= early_stopping_patience:
+                    stopped_epoch_num = epoch + 1
+                    log_to_gui(f"Early stopping triggered after {epochs_no_improve} epochs without improvement.\n")
+                    # Best model is already saved by the logic above.
+                    # If we need to ensure the `pilotnet_model` variable holds these best weights:
+                    # pilotnet_model.load_state_dict(torch.load(model_save_path, map_location=device))
+                    # log_to_gui("Restored best model weights to current model instance.\n")
+                    break 
+            else: # No validation loader
+                log_to_gui(format_log_message(epoch, current_logs, num_epochs))
+                # If no validation, save model at the end of all epochs
+                if epoch == num_epochs - 1:
+                     torch.save(pilotnet_model.state_dict(), model_save_path)
+                     log_to_gui(f"Model saved at end of training (no validation) to {model_save_path}\n")
+
         log_to_gui("Training completed.\n")
 
         # --- 5. Model Saving ---
-        # ModelCheckpoint already saved the best model to model_save_path.
-        # The explicit save below would save the model from the *last* epoch,
-        # which might not be the best one if save_best_only=True was used.
-        # log_to_gui(f"Final model state (from last epoch) available. Best model saved to: {model_save_path} by ModelCheckpoint.\n")
-        # os.makedirs(os.path.dirname(model_save_path), exist_ok=True) # Directory already created for ModelCheckpoint
-        # pilotnet_model.save(model_save_path) # This would overwrite the best model
-        if early_stopping_callback.stopped_epoch > 0: # Check if early stopping was triggered
-            log_to_gui(f"Early stopping triggered at epoch {early_stopping_callback.stopped_epoch + 1}.\n")
+        # Logic for saving the best model is now integrated into the training loop.
+        if stopped_epoch_num > 0:
+            log_to_gui(f"Early stopping was triggered at epoch {stopped_epoch_num}.\n")
         
-        log_to_gui(f"Best model (based on val_loss) during training was saved to (or restored to): {model_save_path}\n")
+        if os.path.exists(model_save_path):
+            log_to_gui(f"Best model (based on val_loss) during training was saved to: {model_save_path}\n")
+        else:
+            log_to_gui(f"No model was saved (e.g. no validation or training did not complete an epoch to save).\n")
 
         # --- 6. Model Evaluation on Test Dataset ---
         if test_loader and len(test_loader) > 0:
@@ -636,19 +618,21 @@ def run_training_thread(
             preds = []
             truths = []
             for images, labels in test_loader:
-                # Load the best model for evaluation if it was saved
-                # If EarlyStopping restored best weights, pilotnet_model is already the best one.
-                # ModelCheckpoint also saves the best one.
-                # So, loading from model_save_path should give the best model.
-                if os.path.exists(model_save_path) and early_stopping_callback.restore_best_weights:
+                # Load the best model for evaluation
+                eval_model = build_pilotnet_model(input_channels=global_train_config.IMG_CHANNELS)
+                if os.path.exists(model_save_path):
                     log_to_gui(f"Loading best model from {model_save_path} for evaluation.\n")
-                    eval_model = keras.models.load_model(model_save_path)
+                    eval_model.load_state_dict(torch.load(model_save_path, map_location=device))
                 else:
-                    log_to_gui("Warning: Best model not found. Evaluating with the model from the last epoch.\n")
-                    eval_model = pilotnet_model # Fallback to last epoch model
-                outputs = eval_model.predict(images, verbose=0)
-                preds.extend(outputs.flatten())
-                truths.extend(labels.flatten())
+                    log_to_gui("Warning: Saved model not found for evaluation. Using model from end of training (if available).\n")
+                    eval_model.load_state_dict(pilotnet_model.state_dict()) # Use the one from training loop
+                
+                eval_model.to(device)
+                eval_model.eval()
+                with torch.no_grad():
+                    outputs = eval_model(images.to(device))
+                preds.extend(outputs.cpu().numpy().flatten())
+                truths.extend(labels.numpy().flatten())
 
             plt.figure(figsize=(10, 6))
             plt.plot(truths, label="Actual Steering Angles", alpha=0.7)
