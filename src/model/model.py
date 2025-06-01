@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from . import config
@@ -9,10 +8,10 @@ class PilotNetPyTorch(nn.Module):
         # Convolutional layers
         # Input shape: (N, C, H, W) -> (N, input_channels, 66, 200)
         self.conv1 = nn.Conv2d(input_channels, 24, kernel_size=5, stride=2) # Out: (N, 24, 31, 98)
-        self.conv2 = nn.Conv2d(24, 36, kernel_size=5, stride=2)           # Out: (N, 36, 14, 47)
-        self.conv3 = nn.Conv2d(36, 48, kernel_size=5, stride=2)           # Out: (N, 48, 5, 22)
-        self.conv4 = nn.Conv2d(48, 64, kernel_size=3, stride=1)           # Out: (N, 64, 3, 20)
-        self.conv5 = nn.Conv2d(64, 64, kernel_size=3, stride=1)           # Out: (N, 64, 1, 18)
+        self.conv2 = nn.Conv2d(24, 36, kernel_size=5, stride=2)             # Out: (N, 36, 14, 47)
+        self.conv3 = nn.Conv2d(36, 48, kernel_size=5, stride=2)             # Out: (N, 48, 5, 22)
+        self.conv4 = nn.Conv2d(48, 64, kernel_size=3, stride=1)             # Out: (N, 64, 3, 20)
+        self.conv5 = nn.Conv2d(64, 64, kernel_size=3, stride=1)             # Out: (N, 64, 1, 18)
 
         # Calculate the flattened size based on the output of the last conv layer
         # For input H=66, W=200, the output of conv5 is (N, 64, 1, 18)
