@@ -17,8 +17,8 @@ import importlib  # For Keras backend setting
 import matplotlib.pyplot as plt
 
 from model.data_loader import create_dataloaders_from_yaml
-from model.model import build_pilotnet_model
-import model.config as train_config
+from model.model import build_pilotnet_model, build_pilotnet_model_v_elu_dropout
+import model.config as global_train_config # For default values
 
 
 class Player:
@@ -404,6 +404,15 @@ training_status_tag = "training_status_indicator"
 train_button_tag = "train_model_button_tag"
 data_config_path_input_tag = "data_config_path_input_tag"
 plot_save_path_input_tag = "plot_save_path_input_tag"
+model_save_path_input_tag = "model_save_path_input_tag"
+batch_size_input_tag = "batch_size_input_tag"
+num_epochs_input_tag = "num_epochs_input_tag"
+learning_rate_input_tag = "learning_rate_input_tag"
+val_split_size_input_tag = "val_split_size_input_tag"
+random_state_input_tag = "random_state_input_tag"
+num_workers_input_tag = "num_workers_input_tag"
+early_stopping_patience_input_tag = "early_stopping_patience_input_tag"
+
 
 # ---------- Create texture buffer ----------
 dpg.create_context()
@@ -471,7 +480,7 @@ def set_keras_backend_for_app(log_fn):
         return False
 
 
-def format_log_message(epoch, logs):
+def format_log_message(epoch, logs, total_epochs):
     """Formats the log message for a Keras epoch."""
     loss_val = logs.get("loss")
     val_loss = logs.get("val_loss")
@@ -483,32 +492,55 @@ def format_log_message(epoch, logs):
     val_loss_str = f"{val_loss:.4f}" if val_loss is not None else "N/A"
 
     return (
-        f"Epoch {epoch+1}/{train_config.NUM_EPOCHS} - "
+        f"Epoch {epoch+1}/{total_epochs} - "
         f"loss: {loss_str} - "
         f"val_loss: {val_loss_str}\n"
     )
 
 
-def run_training_thread(data_config_path, plot_save_path):
+def run_training_thread(
+    data_config_path,
+    plot_save_path,
+    model_save_path,
+    batch_size,
+    num_epochs,
+    learning_rate,
+    val_split_size,
+    random_state,
+    num_workers,
+    early_stopping_patience,
+):
     """The main logic for training, adapted from train.py."""
     try:
         log_to_gui("--- Training Process Started ---\n")
+        log_to_gui(f"Using data config: {data_config_path}\n")
+        log_to_gui(f"Evaluation plot will be saved to: {plot_save_path}\n")
+        log_to_gui(f"Model will be saved to: {model_save_path}\n")
+        log_to_gui("Training Parameters:\n")
+        log_to_gui(f"  Batch Size: {batch_size}\n")
+        log_to_gui(f"  Num Epochs: {num_epochs}\n")
+        log_to_gui(f"  Learning Rate: {learning_rate}\n")
+        log_to_gui(f"  Validation Split Size: {val_split_size}\n")
+        log_to_gui(f"  Random State: {random_state}\n")
+        log_to_gui(f"  Num Workers: {num_workers}\n")
+        log_to_gui(f"  Early Stopping Patience: {early_stopping_patience}\n\n")
+
         if not set_keras_backend_for_app(log_to_gui):
             dpg.set_value(training_status_tag, "Error: Keras backend")
             return
 
         import keras  # Now safe to import and use Keras
-        from keras.callbacks import LambdaCallback
-
-        log_to_gui(f"Using data config: {data_config_path}\n")
-        log_to_gui(f"Evaluation plot will be saved to: {plot_save_path}\n")
-        log_to_gui(f"Model will be saved to: {train_config.MODEL_SAVE_PATH}\n")
-
+        from keras.callbacks import LambdaCallback, ModelCheckpoint, EarlyStopping
+        
         # --- 1. Data Preparation ---
         log_to_gui("Loading and preparing data...\n")
         # Note: create_dataloaders_from_yaml might print, consider capturing or modifying it
         train_loader, val_loader, test_loader = create_dataloaders_from_yaml(
-            data_config_path
+            data_config_path,
+            batch_size=batch_size,
+            val_split_size=val_split_size,
+            random_state=random_state,
+            num_workers=num_workers,
         )
 
         if not train_loader and not val_loader and not test_loader:
@@ -531,44 +563,72 @@ def run_training_thread(data_config_path, plot_save_path):
 
         # --- 2. Model Building ---
         log_to_gui("Building the PilotNet model...\n")
-        pilotnet_model = build_pilotnet_model(train_config.MODEL_INPUT_SHAPE)
+        pilotnet_model = build_pilotnet_model(global_train_config.MODEL_INPUT_SHAPE)
         log_to_gui("Model built.\n")
 
         # --- 3. Model Compilation ---
         log_to_gui("Compiling the model...\n")
         pilotnet_model.compile(
-            optimizer=keras.optimizers.Adam(learning_rate=train_config.LEARNING_RATE),
+            optimizer=keras.optimizers.Adam(learning_rate=learning_rate),
             loss="mse",
         )
         # Capture model summary to log
         summary_list = []
         pilotnet_model.summary(print_fn=lambda x: summary_list.append(x))
         log_to_gui("Model Summary:\n" + "\n".join(summary_list) + "\n")
-
+        
         # --- 4. Model Training ---
-        log_to_gui(f"Starting training for {train_config.NUM_EPOCHS} epochs...\n")
+        log_to_gui(f"Starting training for {num_epochs} epochs...\n")
         dpg.set_value(training_status_tag, "Status: Training...")
 
         epoch_log_callback = LambdaCallback(
-            on_epoch_end=lambda epoch, logs: log_to_gui(format_log_message(epoch, logs))
+            on_epoch_end=lambda epoch, logs: log_to_gui(
+                format_log_message(epoch, logs, num_epochs)
+            )
         )
 
+        # Callback to save the best model
+        # Ensure the directory for model_save_path exists for ModelCheckpoint
+        os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
+        model_checkpoint_callback = ModelCheckpoint(
+            filepath=model_save_path,
+            save_best_only=True,
+            monitor='val_loss',
+            mode='min',
+            verbose=1 # Logs a message when the model is saved
+        )
+
+        # Callback for Early Stopping
+        early_stopping_callback = EarlyStopping(
+            monitor='val_loss',
+            patience=early_stopping_patience,
+            verbose=1,
+            mode='min',
+            restore_best_weights=True # Restores model weights from the epoch with the best value of the monitored quantity.
+        )
+        
         history = pilotnet_model.fit(
             train_loader,
-            epochs=train_config.NUM_EPOCHS,
+            epochs=num_epochs,
             validation_data=(
                 val_loader if val_loader and len(val_loader) > 0 else None
             ),
             verbose=0,  # We use custom callback for logging
-            callbacks=[epoch_log_callback],
+            callbacks=[epoch_log_callback, model_checkpoint_callback, early_stopping_callback],
         )
         log_to_gui("Training completed.\n")
 
         # --- 5. Model Saving ---
-        log_to_gui(f"Saving the model to: {train_config.MODEL_SAVE_PATH}...\n")
-        os.makedirs(os.path.dirname(train_config.MODEL_SAVE_PATH), exist_ok=True)
-        pilotnet_model.save(train_config.MODEL_SAVE_PATH)
-        log_to_gui("Model saved.\n")
+        # ModelCheckpoint already saved the best model to model_save_path.
+        # The explicit save below would save the model from the *last* epoch,
+        # which might not be the best one if save_best_only=True was used.
+        # log_to_gui(f"Final model state (from last epoch) available. Best model saved to: {model_save_path} by ModelCheckpoint.\n")
+        # os.makedirs(os.path.dirname(model_save_path), exist_ok=True) # Directory already created for ModelCheckpoint
+        # pilotnet_model.save(model_save_path) # This would overwrite the best model
+        if early_stopping_callback.stopped_epoch > 0: # Check if early stopping was triggered
+            log_to_gui(f"Early stopping triggered at epoch {early_stopping_callback.stopped_epoch + 1}.\n")
+        
+        log_to_gui(f"Best model (based on val_loss) during training was saved to (or restored to): {model_save_path}\n")
 
         # --- 6. Model Evaluation on Test Dataset ---
         if test_loader and len(test_loader) > 0:
@@ -576,7 +636,17 @@ def run_training_thread(data_config_path, plot_save_path):
             preds = []
             truths = []
             for images, labels in test_loader:
-                outputs = pilotnet_model.predict(images, verbose=0)
+                # Load the best model for evaluation if it was saved
+                # If EarlyStopping restored best weights, pilotnet_model is already the best one.
+                # ModelCheckpoint also saves the best one.
+                # So, loading from model_save_path should give the best model.
+                if os.path.exists(model_save_path) and early_stopping_callback.restore_best_weights:
+                    log_to_gui(f"Loading best model from {model_save_path} for evaluation.\n")
+                    eval_model = keras.models.load_model(model_save_path)
+                else:
+                    log_to_gui("Warning: Best model not found. Evaluating with the model from the last epoch.\n")
+                    eval_model = pilotnet_model # Fallback to last epoch model
+                outputs = eval_model.predict(images, verbose=0)
                 preds.extend(outputs.flatten())
                 truths.extend(labels.flatten())
 
@@ -617,6 +687,14 @@ def run_training_thread(data_config_path, plot_save_path):
 def on_start_training_clicked():
     data_config = dpg.get_value(data_config_path_input_tag)
     plot_path = dpg.get_value(plot_save_path_input_tag)
+    model_save_path = dpg.get_value(model_save_path_input_tag)
+    batch_size = dpg.get_value(batch_size_input_tag)
+    num_epochs = dpg.get_value(num_epochs_input_tag)
+    learning_rate = dpg.get_value(learning_rate_input_tag)
+    val_split_size = dpg.get_value(val_split_size_input_tag)
+    random_state = dpg.get_value(random_state_input_tag)
+    num_workers = dpg.get_value(num_workers_input_tag)
+    early_stopping_patience = dpg.get_value(early_stopping_patience_input_tag)
 
     if not data_config or not os.path.isfile(data_config):
         log_to_gui("ERROR: Data Config YAML path is invalid or file does not exist.\n")
@@ -626,13 +704,38 @@ def on_start_training_clicked():
         log_to_gui("ERROR: Plot Save Path is required.\n")
         dpg.set_value(training_status_tag, "Error: Invalid Plot Save Path")
         return
+    if not model_save_path:
+        log_to_gui("ERROR: Model Save Path is required.\n")
+        dpg.set_value(training_status_tag, "Error: Invalid Model Save Path")
+        return
+    # Basic validation for numeric types (can be expanded)
+    if not isinstance(batch_size, int) or batch_size <= 0:
+        log_to_gui(f"ERROR: Invalid Batch Size ({batch_size}). Must be a positive integer.\n")
+        return
+    if not isinstance(num_epochs, int) or num_epochs <= 0:
+        log_to_gui(f"ERROR: Invalid Number of Epochs ({num_epochs}). Must be a positive integer.\n")
+        return
+    if not isinstance(learning_rate, float) or learning_rate <= 0:
+        log_to_gui(f"ERROR: Invalid Learning Rate ({learning_rate}). Must be a positive float.\n")
+        return
+    if not isinstance(val_split_size, float) or not (0.0 <= val_split_size < 1.0):
+        log_to_gui(f"ERROR: Invalid Validation Split Size ({val_split_size}). Must be a float between 0.0 and 1.0 (exclusive of 1.0).\n")
+        return
+    if not isinstance(early_stopping_patience, int) or early_stopping_patience < 0: # 0 means no early stopping if patience is 0
+        log_to_gui(f"ERROR: Invalid Early Stopping Patience ({early_stopping_patience}). Must be a non-negative integer.\n")
+        return
 
     dpg.set_value(training_log_tag, "")  # Clear previous logs
     dpg.set_value(training_status_tag, "Status: Starting...")
     dpg.configure_item(train_button_tag, enabled=False)
 
     thread = threading.Thread(
-        target=run_training_thread, args=(data_config, plot_path), daemon=True
+        target=run_training_thread,
+        args=(data_config, plot_path, model_save_path,
+              batch_size, num_epochs, learning_rate,
+              val_split_size, random_state, num_workers,
+              early_stopping_patience),
+        daemon=True,
     )
     thread.start()
 
@@ -655,6 +758,9 @@ def select_data_config_callback(sender, app_data):
 
 def select_plot_save_path_callback(sender, app_data):
     dpg.set_value(plot_save_path_input_tag, app_data["file_path_name"])
+
+def select_model_save_path_callback(sender, app_data):
+    dpg.set_value(model_save_path_input_tag, app_data["file_path_name"])
 
 
 # ---------- GUI Layout ----------
@@ -859,6 +965,86 @@ with dpg.window(
                     width=UI_INPUT_WIDTH_LONG - 70,
                     default_value="plots/steering_angle_evaluation.png",
                     hint="e.g., plots/evaluation.png",
+                )
+
+            # File Dialog for Model Save Path
+            with dpg.file_dialog(
+                directory_selector=False,
+                show=False,
+                callback=select_model_save_path_callback,
+                tag="model_save_file_dialog",
+                width=500,
+                height=400,
+                default_filename="pilotnet_model.keras",
+            ):
+                dpg.add_file_extension(".keras", color=(0, 255, 255, 255))
+                dpg.add_file_extension(".*")
+
+            dpg.add_text("Model Save Path:")
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Browse##ModelSave",
+                    callback=lambda: dpg.show_item("model_save_file_dialog"),
+                )
+                dpg.add_input_text(
+                    tag=model_save_path_input_tag,
+                    width=UI_INPUT_WIDTH_LONG - 70,
+                    default_value=global_train_config.MODEL_SAVE_PATH,
+                    hint="e.g., models/pilotnet.keras",
+                )
+
+            dpg.add_spacer(height=5)
+            dpg.add_text("Training Hyperparameters:")
+            with dpg.group(horizontal=True):
+                dpg.add_input_int(
+                    label="Batch Size",
+                    tag=batch_size_input_tag,
+                    default_value=global_train_config.BATCH_SIZE,
+                    width=150,
+                )
+                dpg.add_input_int(
+                    label="Num Epochs",
+                    tag=num_epochs_input_tag,
+                    default_value=global_train_config.NUM_EPOCHS,
+                    width=150,
+                )
+            with dpg.group(horizontal=True):
+                dpg.add_input_float(
+                    label="Learning Rate",
+                    tag=learning_rate_input_tag,
+                    default_value=global_train_config.LEARNING_RATE,
+                    format="%.1e", # Scientific notation
+                    width=150,
+                )
+                dpg.add_input_float(
+                    label="Validation Split",
+                    tag=val_split_size_input_tag,
+                    default_value=global_train_config.VAL_SPLIT_SIZE,
+                    format="%.2f",
+                    min_value=0.0, max_value=0.99, step=0.01, # Max < 1.0
+                    width=150,
+                )
+            with dpg.group(horizontal=True):
+                dpg.add_input_int(
+                    label="Random State",
+                    tag=random_state_input_tag,
+                    default_value=global_train_config.RANDOM_STATE,
+                    width=150,
+                )
+                dpg.add_input_int(
+                    label="Num Workers",
+                    tag=num_workers_input_tag,
+                    default_value=global_train_config.NUM_WORKERS,
+                    min_value=0,
+                    width=150,
+                )
+            with dpg.group(horizontal=True):
+                dpg.add_input_int(
+                    label="Early Stopping Patience",
+                    tag=early_stopping_patience_input_tag,
+                    default_value=5, # Default patience
+                    min_value=0, # 0 could mean no early stopping depending on Keras interpretation or disable it
+                    width=150,
                 )
 
             dpg.add_spacer(height=10)

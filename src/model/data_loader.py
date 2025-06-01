@@ -139,21 +139,28 @@ def load_yaml_config(yaml_filepath):
 
 # Refactored function to create DataLoaders
 def get_dataloaders(
-    samples_for_train_val_split, dedicated_test_samples, images_dir, data_transforms
+    samples_for_train_val_split,
+    dedicated_test_samples,
+    images_dir,
+    data_transforms,
+    batch_size=None,
+    val_split_size=None,
+    random_state=None,
+    num_workers=None,
 ):
     """Creates and returns DataLoaders for training, validation, and test sets."""
-    if not samples_for_train_val_split and not dedicated_test_samples:
-        print(
-            "ERROR: No valid samples found in the annotations file. Cannot create DataLoaders."
-        )
-        return None, None  # Return None if no data
+    # Use provided params or fallback to config
+    current_batch_size = batch_size if batch_size is not None else config.BATCH_SIZE
+    current_val_split_size = val_split_size if val_split_size is not None else config.VAL_SPLIT_SIZE
+    current_random_state = random_state if random_state is not None else config.RANDOM_STATE
+    current_num_workers = num_workers if num_workers is not None else config.NUM_WORKERS
 
     # Split data into training and validation sets using scikit-learn
     if samples_for_train_val_split:
         train_samples, val_samples = train_test_split(
             samples_for_train_val_split,
-            test_size=config.VAL_SPLIT_SIZE,
-            random_state=config.RANDOM_STATE,
+            test_size=current_val_split_size,
+            random_state=current_random_state,
             shuffle=True,  # Shuffle data before splitting
         )
         print(f"Total number of samples for train/val split: {len(samples_for_train_val_split)}")
@@ -183,9 +190,9 @@ def get_dataloaders(
     if train_dataset and len(train_dataset) > 0:
         train_loader = DataLoader(
             train_dataset,
-            batch_size=config.BATCH_SIZE,
+            batch_size=current_batch_size,
             shuffle=True,
-            num_workers=config.NUM_WORKERS,
+            num_workers=current_num_workers,
             pin_memory=torch.cuda.is_available(),
             collate_fn=collate_fn_skip_broken,
         )
@@ -196,9 +203,9 @@ def get_dataloaders(
     ):  # Check if val_dataset exists and is not empty
         val_loader = DataLoader(
             val_dataset,
-            batch_size=config.BATCH_SIZE,
+            batch_size=current_batch_size,
             shuffle=False,  # Do not shuffle validation set
-            num_workers=config.NUM_WORKERS,
+            num_workers=current_num_workers,
             pin_memory=torch.cuda.is_available(),
             collate_fn=collate_fn_skip_broken,
         )
@@ -215,9 +222,9 @@ def get_dataloaders(
         if len(test_dataset) > 0:
             test_loader = DataLoader(
                 test_dataset,
-                batch_size=config.BATCH_SIZE,
+                batch_size=current_batch_size,
                 shuffle=False,
-                num_workers=config.NUM_WORKERS,
+                num_workers=current_num_workers,
                 pin_memory=torch.cuda.is_available(),
                 collate_fn=collate_fn_skip_broken,
             )
@@ -230,14 +237,20 @@ def get_dataloaders(
 
 
 # New main function to orchestrate data loading using YAML
-def create_dataloaders_from_yaml(yaml_config_path):
+def create_dataloaders_from_yaml(
+    yaml_config_path,
+    batch_size=None,
+    val_split_size=None,
+    random_state=None,
+    num_workers=None,
+):
     """
     Loads data configuration from YAML, parses annotations, splits data,
     and creates DataLoaders.
     """
     data_cfg = load_yaml_config(yaml_config_path)
     if not data_cfg:
-        return None, None, None # Failed to load YAML
+        return None, None, None  # Failed to load YAML
 
     annotations_filepath = data_cfg.get('annotations_file')
     images_dir = data_cfg.get('images_dir')
@@ -280,7 +293,7 @@ def create_dataloaders_from_yaml(yaml_config_path):
 
     if test_set_idx_start is not None and test_set_idx_end is not None:
         if not (isinstance(test_set_idx_start, int) and isinstance(test_set_idx_end, int)) or \
-           test_set_idx_start < 0 or test_set_idx_end > len(samples_after_skip) or test_set_idx_start >= test_set_idx_end:
+           test_set_idx_start < 0 or test_set_idx_end > len(all_parsed_samples) or test_set_idx_start >= test_set_idx_end:
             print(
                 f"ERROR: Invalid 'test_set_idx_start' ({test_set_idx_start}) or "
                 f"'test_set_idx_end' ({test_set_idx_end}) for {len(samples_after_skip)} available samples after skipping. "
@@ -300,5 +313,12 @@ def create_dataloaders_from_yaml(yaml_config_path):
     data_transforms = get_data_transforms()
 
     return get_dataloaders(
-        samples_for_train_val_split, dedicated_test_samples, images_dir, data_transforms
+        samples_for_train_val_split,
+        dedicated_test_samples,
+        images_dir,
+        data_transforms,
+        batch_size=batch_size,
+        val_split_size=val_split_size,
+        random_state=random_state,
+        num_workers=num_workers,
     )
