@@ -1,6 +1,7 @@
 import dearpygui.dearpygui as dpg
-from .player import Player # Assuming Player is in the same directory
+from .player import Player  # Assuming Player is in the same directory
 from tensorflow.keras.models import load_model
+
 
 class ModelEvaluator(Player):
     def __init__(

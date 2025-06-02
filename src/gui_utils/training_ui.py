@@ -9,9 +9,9 @@ import matplotlib.pyplot as plt
 
 from model.data_loader import create_dataloaders_from_yaml
 from model.model import build_pilotnet_model
-import model.config as global_train_config # For default values
+import model.config as global_train_config  # For default values
 
-UI_INPUT_WIDTH_LONG = 550 # Define it here or pass as argument
+UI_INPUT_WIDTH_LONG = 550  # Define it here or pass as argument
 
 # --- Globals for Model Training UI within this module ---
 training_log_queue = queue.Queue()
@@ -95,25 +95,29 @@ def run_training_thread(
             dpg.set_value(TRAINING_STATUS_TAG, "Error: Training data missing")
             return
         if len(train_loader) == 0:
-            log_to_gui("ERROR: train_loader is empty. Check annotations, paths, BATCH_SIZE.\n")
+            log_to_gui(
+                "ERROR: train_loader is empty. Check annotations, paths, BATCH_SIZE.\n"
+            )
             dpg.set_value(TRAINING_STATUS_TAG, "Error: Training data empty")
             return
         log_to_gui("Data loaded successfully.\n")
 
-        pilotnet_model = build_pilotnet_model(input_channels=global_train_config.IMG_CHANNELS)
+        pilotnet_model = build_pilotnet_model(
+            input_channels=global_train_config.IMG_CHANNELS
+        )
         pilotnet_model.to(device)
         log_to_gui("Model built.\n" + str(pilotnet_model) + "\n")
 
         optimizer = optim.Adam(pilotnet_model.parameters(), lr=learning_rate)
         criterion = nn.MSELoss()
         log_to_gui("Optimizer and loss function set up.\n")
-        
+
         log_to_gui(f"Starting training for {num_epochs} epochs...\n")
         dpg.set_value(TRAINING_STATUS_TAG, "Status: Training...")
 
         os.makedirs(os.path.dirname(model_save_path), exist_ok=True)
 
-        best_val_loss = float('inf')
+        best_val_loss = float("inf")
         epochs_no_improve = 0
         stopped_epoch_num = 0
 
@@ -128,9 +132,9 @@ def run_training_thread(
                 loss.backward()
                 optimizer.step()
                 running_loss += loss.item()
-            
+
             avg_train_loss = running_loss / len(train_loader)
-            current_logs = {'loss': avg_train_loss}
+            current_logs = {"loss": avg_train_loss}
 
             avg_val_loss = None
             if val_loader and len(val_loader) > 0:
@@ -138,38 +142,49 @@ def run_training_thread(
                 val_running_loss = 0.0
                 with torch.no_grad():
                     for inputs_val, labels_val in val_loader:
-                        inputs_val, labels_val = inputs_val.to(device), labels_val.to(device)
+                        inputs_val, labels_val = inputs_val.to(device), labels_val.to(
+                            device
+                        )
                         outputs_val = pilotnet_model(inputs_val)
                         loss_val = criterion(outputs_val, labels_val)
                         val_running_loss += loss_val.item()
                 avg_val_loss = val_running_loss / len(val_loader)
-                current_logs['val_loss'] = avg_val_loss
+                current_logs["val_loss"] = avg_val_loss
                 log_to_gui(format_log_message(epoch, current_logs, num_epochs))
 
                 if avg_val_loss < best_val_loss:
                     best_val_loss = avg_val_loss
                     torch.save(pilotnet_model.state_dict(), model_save_path)
-                    log_to_gui(f"Epoch {epoch+1}: val_loss improved to {avg_val_loss:.4f}, model saved.\n")
+                    log_to_gui(
+                        f"Epoch {epoch+1}: val_loss improved to {avg_val_loss:.4f}, model saved.\n"
+                    )
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
-                    log_to_gui(f"Epoch {epoch+1}: val_loss ({avg_val_loss:.4f}) did not improve from {best_val_loss:.4f}.\n")
-                
-                if early_stopping_patience > 0 and epochs_no_improve >= early_stopping_patience:
+                    log_to_gui(
+                        f"Epoch {epoch+1}: val_loss ({avg_val_loss:.4f}) did not improve from {best_val_loss:.4f}.\n"
+                    )
+
+                if (
+                    early_stopping_patience > 0
+                    and epochs_no_improve >= early_stopping_patience
+                ):
                     stopped_epoch_num = epoch + 1
-                    log_to_gui(f"Early stopping triggered after {epochs_no_improve} epochs without improvement.\n")
-                    break 
+                    log_to_gui(
+                        f"Early stopping triggered after {epochs_no_improve} epochs without improvement.\n"
+                    )
+                    break
             else:
                 log_to_gui(format_log_message(epoch, current_logs, num_epochs))
                 if epoch == num_epochs - 1:
-                     torch.save(pilotnet_model.state_dict(), model_save_path)
-                     log_to_gui(f"Model saved at end of training (no validation).\n")
+                    torch.save(pilotnet_model.state_dict(), model_save_path)
+                    log_to_gui(f"Model saved at end of training (no validation).\n")
 
         log_to_gui("Training completed.\n")
 
         if stopped_epoch_num > 0:
             log_to_gui(f"Early stopping was triggered at epoch {stopped_epoch_num}.\n")
-        
+
         if os.path.exists(model_save_path):
             log_to_gui(f"Best model saved to: {model_save_path}\n")
         else:
@@ -178,12 +193,16 @@ def run_training_thread(
         if test_loader and len(test_loader) > 0:
             log_to_gui("Evaluating model on the test set...\n")
             preds, truths = [], []
-            eval_model = build_pilotnet_model(input_channels=global_train_config.IMG_CHANNELS)
+            eval_model = build_pilotnet_model(
+                input_channels=global_train_config.IMG_CHANNELS
+            )
             if os.path.exists(model_save_path):
-                eval_model.load_state_dict(torch.load(model_save_path, map_location=device))
-            else: # Fallback to model in memory if save failed or no validation
+                eval_model.load_state_dict(
+                    torch.load(model_save_path, map_location=device)
+                )
+            else:  # Fallback to model in memory if save failed or no validation
                 eval_model.load_state_dict(pilotnet_model.state_dict())
-            
+
             eval_model.to(device)
             eval_model.eval()
             with torch.no_grad():
@@ -216,6 +235,7 @@ def run_training_thread(
     except Exception as e:
         log_to_gui(f"\n--- ERROR during training process ---\n{str(e)}\n")
         import traceback
+
         log_to_gui(traceback.format_exc() + "\n")
         dpg.set_value(TRAINING_STATUS_TAG, "Status: Error")
     finally:
@@ -248,10 +268,18 @@ def on_start_training_clicked():
 
     thread = threading.Thread(
         target=run_training_thread,
-        args=(data_config, plot_path, model_save_path,
-              batch_size, num_epochs, learning_rate,
-              val_split_size, random_state, num_workers,
-              early_stopping_patience),
+        args=(
+            data_config,
+            plot_path,
+            model_save_path,
+            batch_size,
+            num_epochs,
+            learning_rate,
+            val_split_size,
+            random_state,
+            num_workers,
+            early_stopping_patience,
+        ),
         daemon=True,
     )
     thread.start()
@@ -281,47 +309,152 @@ def create_training_tab_content(parent_tab_id):
         dpg.add_text("Configure and start model training based on a data YAML file.")
 
         # File Dialogs (defined once, shown on button click)
-        with dpg.file_dialog(directory_selector=False, show=False, callback=_select_file_callback, user_data=DATA_CONFIG_PATH_INPUT_TAG, tag="training_ui::data_config_file_dialog", width=500, height=400):
+        with dpg.file_dialog(
+            directory_selector=False,
+            show=False,
+            callback=_select_file_callback,
+            user_data=DATA_CONFIG_PATH_INPUT_TAG,
+            tag="training_ui::data_config_file_dialog",
+            width=500,
+            height=400,
+        ):
             dpg.add_file_extension(".yaml", color=(255, 255, 0, 255))
             dpg.add_file_extension(".yml", color=(255, 255, 0, 255))
-        with dpg.file_dialog(directory_selector=False, show=False, callback=_select_file_callback, user_data=PLOT_SAVE_PATH_INPUT_TAG, tag="training_ui::plot_save_file_dialog", width=500, height=400, default_filename="steering_angle_evaluation.png"):
-            dpg.add_file_extension(".png", color=(0, 255, 0, 255)); dpg.add_file_extension(".*")
-        with dpg.file_dialog(directory_selector=False, show=False, callback=_select_file_callback, user_data=MODEL_SAVE_PATH_INPUT_TAG, tag="training_ui::model_save_file_dialog", width=500, height=400, default_filename="pilotnet_pytorch.pth"):
-            dpg.add_file_extension(".pth", color=(0, 255, 255, 255)); dpg.add_file_extension(".*")
+        with dpg.file_dialog(
+            directory_selector=False,
+            show=False,
+            callback=_select_file_callback,
+            user_data=PLOT_SAVE_PATH_INPUT_TAG,
+            tag="training_ui::plot_save_file_dialog",
+            width=500,
+            height=400,
+            default_filename="steering_angle_evaluation.png",
+        ):
+            dpg.add_file_extension(".png", color=(0, 255, 0, 255))
+            dpg.add_file_extension(".*")
+        with dpg.file_dialog(
+            directory_selector=False,
+            show=False,
+            callback=_select_file_callback,
+            user_data=MODEL_SAVE_PATH_INPUT_TAG,
+            tag="training_ui::model_save_file_dialog",
+            width=500,
+            height=400,
+            default_filename="pilotnet_pytorch.pth",
+        ):
+            dpg.add_file_extension(".pth", color=(0, 255, 255, 255))
+            dpg.add_file_extension(".*")
 
         dpg.add_text("Data Configuration YAML:")
         with dpg.group(horizontal=True):
-            dpg.add_button(label="Browse##DataConfig",callback=lambda: dpg.show_item("training_ui::data_config_file_dialog"))
-            dpg.add_input_text(tag=DATA_CONFIG_PATH_INPUT_TAG, width=UI_INPUT_WIDTH_LONG - 70, hint="e.g., new_data/data.yaml")
+            dpg.add_button(
+                label="Browse##DataConfig",
+                callback=lambda: dpg.show_item("training_ui::data_config_file_dialog"),
+            )
+            dpg.add_input_text(
+                tag=DATA_CONFIG_PATH_INPUT_TAG,
+                width=UI_INPUT_WIDTH_LONG - 70,
+                hint="e.g., new_data/data.yaml",
+            )
 
         dpg.add_text("Evaluation Plot Save Path:")
         with dpg.group(horizontal=True):
-            dpg.add_button(label="Browse##PlotSave", callback=lambda: dpg.show_item("training_ui::plot_save_file_dialog"))
-            dpg.add_input_text(tag=PLOT_SAVE_PATH_INPUT_TAG, width=UI_INPUT_WIDTH_LONG - 70, default_value="plots/steering_angle_evaluation.png", hint="e.g., plots/evaluation.png")
+            dpg.add_button(
+                label="Browse##PlotSave",
+                callback=lambda: dpg.show_item("training_ui::plot_save_file_dialog"),
+            )
+            dpg.add_input_text(
+                tag=PLOT_SAVE_PATH_INPUT_TAG,
+                width=UI_INPUT_WIDTH_LONG - 70,
+                default_value="plots/steering_angle_evaluation.png",
+                hint="e.g., plots/evaluation.png",
+            )
 
         dpg.add_text("Model Save Path:")
         with dpg.group(horizontal=True):
-            dpg.add_button(label="Browse##ModelSave", callback=lambda: dpg.show_item("training_ui::model_save_file_dialog"))
-            dpg.add_input_text(tag=MODEL_SAVE_PATH_INPUT_TAG, width=UI_INPUT_WIDTH_LONG - 70, default_value=global_train_config.MODEL_SAVE_PATH, hint="e.g., models/pilotnet_pytorch.pth")
+            dpg.add_button(
+                label="Browse##ModelSave",
+                callback=lambda: dpg.show_item("training_ui::model_save_file_dialog"),
+            )
+            dpg.add_input_text(
+                tag=MODEL_SAVE_PATH_INPUT_TAG,
+                width=UI_INPUT_WIDTH_LONG - 70,
+                default_value=global_train_config.MODEL_SAVE_PATH,
+                hint="e.g., models/pilotnet_pytorch.pth",
+            )
 
         dpg.add_spacer(height=5)
         dpg.add_text("Training Hyperparameters:")
         with dpg.group(horizontal=True):
-            dpg.add_input_int(label="Batch Size", tag=BATCH_SIZE_INPUT_TAG, default_value=global_train_config.BATCH_SIZE, width=150)
-            dpg.add_input_int(label="Num Epochs", tag=NUM_EPOCHS_INPUT_TAG, default_value=global_train_config.NUM_EPOCHS, width=150)
+            dpg.add_input_int(
+                label="Batch Size",
+                tag=BATCH_SIZE_INPUT_TAG,
+                default_value=global_train_config.BATCH_SIZE,
+                width=150,
+            )
+            dpg.add_input_int(
+                label="Num Epochs",
+                tag=NUM_EPOCHS_INPUT_TAG,
+                default_value=global_train_config.NUM_EPOCHS,
+                width=150,
+            )
         with dpg.group(horizontal=True):
-            dpg.add_input_float(label="Learning Rate", tag=LEARNING_RATE_INPUT_TAG, default_value=global_train_config.LEARNING_RATE, format="%.1e", width=150)
-            dpg.add_input_float(label="Validation Split", tag=VAL_SPLIT_SIZE_INPUT_TAG, default_value=global_train_config.VAL_SPLIT_SIZE, format="%.2f", min_value=0.0, max_value=0.99, step=0.01, width=150)
+            dpg.add_input_float(
+                label="Learning Rate",
+                tag=LEARNING_RATE_INPUT_TAG,
+                default_value=global_train_config.LEARNING_RATE,
+                format="%.1e",
+                width=150,
+            )
+            dpg.add_input_float(
+                label="Validation Split",
+                tag=VAL_SPLIT_SIZE_INPUT_TAG,
+                default_value=global_train_config.VAL_SPLIT_SIZE,
+                format="%.2f",
+                min_value=0.0,
+                max_value=0.99,
+                step=0.01,
+                width=150,
+            )
         with dpg.group(horizontal=True):
-            dpg.add_input_int(label="Random State", tag=RANDOM_STATE_INPUT_TAG, default_value=global_train_config.RANDOM_STATE, width=150)
-            dpg.add_input_int(label="Num Workers", tag=NUM_WORKERS_INPUT_TAG, default_value=global_train_config.NUM_WORKERS, min_value=0, width=150)
+            dpg.add_input_int(
+                label="Random State",
+                tag=RANDOM_STATE_INPUT_TAG,
+                default_value=global_train_config.RANDOM_STATE,
+                width=150,
+            )
+            dpg.add_input_int(
+                label="Num Workers",
+                tag=NUM_WORKERS_INPUT_TAG,
+                default_value=global_train_config.NUM_WORKERS,
+                min_value=0,
+                width=150,
+            )
         with dpg.group(horizontal=True):
-            dpg.add_input_int(label="Early Stopping Patience", tag=EARLY_STOPPING_PATIENCE_INPUT_TAG, default_value=5, min_value=0, width=150)
+            dpg.add_input_int(
+                label="Early Stopping Patience",
+                tag=EARLY_STOPPING_PATIENCE_INPUT_TAG,
+                default_value=5,
+                min_value=0,
+                width=150,
+            )
 
         dpg.add_spacer(height=10)
-        dpg.add_button(label="Start Model Training", tag=TRAIN_BUTTON_TAG, callback=on_start_training_clicked, width=-1)
+        dpg.add_button(
+            label="Start Model Training",
+            tag=TRAIN_BUTTON_TAG,
+            callback=on_start_training_clicked,
+            width=-1,
+        )
         dpg.add_text("Status: Idle", tag=TRAINING_STATUS_TAG)
 
         dpg.add_spacer(height=5)
         dpg.add_text("Training Log:")
-        dpg.add_input_text(tag=TRAINING_LOG_TAG, multiline=True, width=-1, height=300, readonly=True, default_value="Training logs will appear here...\n")
+        dpg.add_input_text(
+            tag=TRAINING_LOG_TAG,
+            multiline=True,
+            width=-1,
+            height=300,
+            readonly=True,
+            default_value="Training logs will appear here...\n",
+        )

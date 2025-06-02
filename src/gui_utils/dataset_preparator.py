@@ -1,7 +1,8 @@
 import os
 import yaml
 import dearpygui.dearpygui as dpg
-from .player import Player # Assuming Player is in the same directory
+from .player import Player  # Assuming Player is in the same directory
+
 
 class DatasetPreparator(Player):
     def __init__(

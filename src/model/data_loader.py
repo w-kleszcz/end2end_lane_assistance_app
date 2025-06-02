@@ -126,14 +126,16 @@ def load_yaml_config(yaml_filepath):
         print(f"ERROR: YAML configuration file '{yaml_filepath}' not found.")
         return None
     try:
-        with open(yaml_filepath, 'r') as f:
+        with open(yaml_filepath, "r") as f:
             config_data = yaml.safe_load(f)
         return config_data
     except yaml.YAMLError as e:
         print(f"ERROR: Could not parse YAML file '{yaml_filepath}': {e}")
         return None
     except Exception as e:
-        print(f"ERROR: An unexpected error occurred while reading YAML file '{yaml_filepath}': {e}")
+        print(
+            f"ERROR: An unexpected error occurred while reading YAML file '{yaml_filepath}': {e}"
+        )
         return None
 
 
@@ -151,8 +153,12 @@ def get_dataloaders(
     """Creates and returns DataLoaders for training, validation, and test sets."""
     # Use provided params or fallback to config
     current_batch_size = batch_size if batch_size is not None else config.BATCH_SIZE
-    current_val_split_size = val_split_size if val_split_size is not None else config.VAL_SPLIT_SIZE
-    current_random_state = random_state if random_state is not None else config.RANDOM_STATE
+    current_val_split_size = (
+        val_split_size if val_split_size is not None else config.VAL_SPLIT_SIZE
+    )
+    current_random_state = (
+        random_state if random_state is not None else config.RANDOM_STATE
+    )
     current_num_workers = num_workers if num_workers is not None else config.NUM_WORKERS
 
     # Split data into training and validation sets using scikit-learn
@@ -163,7 +169,9 @@ def get_dataloaders(
             random_state=current_random_state,
             shuffle=True,  # Shuffle data before splitting
         )
-        print(f"Total number of samples for train/val split: {len(samples_for_train_val_split)}")
+        print(
+            f"Total number of samples for train/val split: {len(samples_for_train_val_split)}"
+        )
         print(f"Number of training samples: {len(train_samples)}")
         print(f"Number of validation samples: {len(val_samples)}")
 
@@ -210,14 +218,18 @@ def get_dataloaders(
             collate_fn=collate_fn_skip_broken,
         )
     elif not val_samples and samples_for_train_val_split:
-        print("WARNING: No validation samples after split, or val_split_size is 0 or 1.")
+        print(
+            "WARNING: No validation samples after split, or val_split_size is 0 or 1."
+        )
 
     # Test DataLoader
     test_loader = None
     if dedicated_test_samples:
         print(f"Number of dedicated test samples: {len(dedicated_test_samples)}")
         test_dataset = DrivingDataset(
-            dedicated_test_samples, images_dir, transform=data_transforms["val"] # Use 'val' transform for test
+            dedicated_test_samples,
+            images_dir,
+            transform=data_transforms["val"],  # Use 'val' transform for test
         )
         if len(test_dataset) > 0:
             test_loader = DataLoader(
@@ -229,7 +241,9 @@ def get_dataloaders(
                 collate_fn=collate_fn_skip_broken,
             )
         else:
-            print("WARNING: Test dataset is empty although dedicated_test_samples were provided.")
+            print(
+                "WARNING: Test dataset is empty although dedicated_test_samples were provided."
+            )
     else:
         print("INFO: No dedicated test samples provided.")
 
@@ -252,8 +266,8 @@ def create_dataloaders_from_yaml(
     if not data_cfg:
         return None, None, None  # Failed to load YAML
 
-    annotations_filepath = data_cfg.get('annotations_file')
-    images_dir = data_cfg.get('images_dir')
+    annotations_filepath = data_cfg.get("annotations_file")
+    images_dir = data_cfg.get("images_dir")
 
     if not annotations_filepath or not images_dir:
         print("ERROR: 'annotations_file' or 'images_dir' not found in YAML config.")
@@ -265,35 +279,50 @@ def create_dataloaders_from_yaml(
         return None, None, None
 
     # Apply indices_to_skip
-    indices_to_skip_yaml = data_cfg.get('indices_to_skip', [])
+    indices_to_skip_yaml = data_cfg.get("indices_to_skip", [])
     if not isinstance(indices_to_skip_yaml, list):
-        print(f"WARNING: 'indices_to_skip' in YAML is not a list. Found: {indices_to_skip_yaml}. Skipping this filter.")
+        print(
+            f"WARNING: 'indices_to_skip' in YAML is not a list. Found: {indices_to_skip_yaml}. Skipping this filter."
+        )
         indices_to_skip_set = set()
     else:
         indices_to_skip_set = set(indices_to_skip_yaml)
-    
+
     samples_after_skip = [
-        sample for i, sample in enumerate(all_parsed_samples) if i not in indices_to_skip_set
+        sample
+        for i, sample in enumerate(all_parsed_samples)
+        if i not in indices_to_skip_set
     ]
-    
+
     num_skipped = len(all_parsed_samples) - len(samples_after_skip)
     if num_skipped > 0:
-        print(f"INFO: Skipped {num_skipped} samples based on 'indices_to_skip' from YAML.")
+        print(
+            f"INFO: Skipped {num_skipped} samples based on 'indices_to_skip' from YAML."
+        )
 
     if not samples_after_skip:
-        print("ERROR: All samples were skipped or no samples remained after filtering 'indices_to_skip'.")
+        print(
+            "ERROR: All samples were skipped or no samples remained after filtering 'indices_to_skip'."
+        )
         return None, None, None
 
     # Split into test set and remaining samples for train/val based on YAML indices
-    test_set_idx_start = data_cfg.get('test_set_idx_start')
-    test_set_idx_end = data_cfg.get('test_set_idx_end')
+    test_set_idx_start = data_cfg.get("test_set_idx_start")
+    test_set_idx_end = data_cfg.get("test_set_idx_end")
 
     dedicated_test_samples = []
     samples_for_train_val_split = []
 
     if test_set_idx_start is not None and test_set_idx_end is not None:
-        if not (isinstance(test_set_idx_start, int) and isinstance(test_set_idx_end, int)) or \
-           test_set_idx_start < 0 or test_set_idx_end > len(all_parsed_samples) or test_set_idx_start >= test_set_idx_end:
+        if (
+            not (
+                isinstance(test_set_idx_start, int)
+                and isinstance(test_set_idx_end, int)
+            )
+            or test_set_idx_start < 0
+            or test_set_idx_end > len(all_parsed_samples)
+            or test_set_idx_start >= test_set_idx_end
+        ):
             print(
                 f"ERROR: Invalid 'test_set_idx_start' ({test_set_idx_start}) or "
                 f"'test_set_idx_end' ({test_set_idx_end}) for {len(samples_after_skip)} available samples after skipping. "
@@ -301,13 +330,24 @@ def create_dataloaders_from_yaml(
             )
             samples_for_train_val_split = samples_after_skip
         else:
-            dedicated_test_samples = samples_after_skip[test_set_idx_start:test_set_idx_end]
-            samples_for_train_val_split = samples_after_skip[:test_set_idx_start] + samples_after_skip[test_set_idx_end:]
-            print(f"INFO: Defined test set from YAML: {len(dedicated_test_samples)} samples (indices {test_set_idx_start}-{test_set_idx_end-1}).")
-            print(f"INFO: Remaining samples for train/val split: {len(samples_for_train_val_split)}.")
+            dedicated_test_samples = samples_after_skip[
+                test_set_idx_start:test_set_idx_end
+            ]
+            samples_for_train_val_split = (
+                samples_after_skip[:test_set_idx_start]
+                + samples_after_skip[test_set_idx_end:]
+            )
+            print(
+                f"INFO: Defined test set from YAML: {len(dedicated_test_samples)} samples (indices {test_set_idx_start}-{test_set_idx_end-1})."
+            )
+            print(
+                f"INFO: Remaining samples for train/val split: {len(samples_for_train_val_split)}."
+            )
     else:
-        print("INFO: 'test_set_idx_start' and/or 'test_set_idx_end' not found in YAML. "
-              "All samples after skipping will be used for train/validation split. No dedicated test set from YAML.")
+        print(
+            "INFO: 'test_set_idx_start' and/or 'test_set_idx_end' not found in YAML. "
+            "All samples after skipping will be used for train/validation split. No dedicated test set from YAML."
+        )
         samples_for_train_val_split = samples_after_skip
 
     data_transforms = get_data_transforms()

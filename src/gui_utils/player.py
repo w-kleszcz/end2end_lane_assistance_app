@@ -16,6 +16,7 @@ from model.data_loader import (
     parse_annotations_file,
 )
 
+
 class Player:
     FRAME_DELAY_DEFAULT = 0.033  # ~30 FPS
 

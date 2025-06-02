@@ -7,8 +7,8 @@ import torch.optim as optim
 import argparse
 import config
 import matplotlib.pyplot as plt
-from data_loader import create_dataloaders_from_yaml # Updated import
-from model import build_pilotnet_model # This will now return a PyTorch model
+from data_loader import create_dataloaders_from_yaml  # Updated import
+from model import build_pilotnet_model  # This will now return a PyTorch model
 
 
 def main():
@@ -41,15 +41,21 @@ def main():
 
     # --- 1. Data Preparation ---
     print(f"Loading and preparing data using YAML config: {args.data_config}...")
-    train_loader, val_loader, test_loader = create_dataloaders_from_yaml(args.data_config)
+    train_loader, val_loader, test_loader = create_dataloaders_from_yaml(
+        args.data_config
+    )
 
     if not train_loader and not val_loader and not test_loader:
         print("ERROR: Failed to create any DataLoaders from YAML. Aborting.")
         return
 
     if args.mode == "train":
-        if not train_loader and not val_loader: # If both are None, specific for training
-            print("ERROR: Failed to create training or validation DataLoaders. Aborting training.")
+        if (
+            not train_loader and not val_loader
+        ):  # If both are None, specific for training
+            print(
+                "ERROR: Failed to create training or validation DataLoaders. Aborting training."
+            )
             return
         if train_loader is None:
             print("ERROR: Failed to create train_loader. Aborting.")
@@ -77,7 +83,7 @@ def main():
 
         # --- 4. Model Training ---
         print(f"\nStarting training for {config.NUM_EPOCHS} epochs...")
-        best_val_loss = float('inf')
+        best_val_loss = float("inf")
         # For simplicity, train.py won't implement early stopping patience from GUI
         # but will save the best model based on val_loss if val_loader is present.
 
@@ -93,16 +99,20 @@ def main():
                     loss.backward()
                     optimizer.step()
                     running_loss += loss.item()
-                
+
                 avg_train_loss = running_loss / len(train_loader)
-                log_msg = f"Epoch {epoch+1}/{config.NUM_EPOCHS} - loss: {avg_train_loss:.4f}"
+                log_msg = (
+                    f"Epoch {epoch+1}/{config.NUM_EPOCHS} - loss: {avg_train_loss:.4f}"
+                )
 
                 if val_loader and len(val_loader) > 0:
                     pilotnet_model.eval()
                     val_running_loss = 0.0
                     with torch.no_grad():
                         for inputs_val, labels_val in val_loader:
-                            inputs_val, labels_val = inputs_val.to(device), labels_val.to(device)
+                            inputs_val, labels_val = inputs_val.to(
+                                device
+                            ), labels_val.to(device)
                             outputs_val = pilotnet_model(inputs_val)
                             loss_val = criterion(outputs_val, labels_val)
                             val_running_loss += loss_val.item()
@@ -113,32 +123,41 @@ def main():
                         best_val_loss = avg_val_loss
                         torch.save(pilotnet_model.state_dict(), config.MODEL_SAVE_PATH)
                         log_msg += " (New best model saved)"
-                else: # No validation loader, save at the end
+                else:  # No validation loader, save at the end
                     if epoch == config.NUM_EPOCHS - 1:
                         torch.save(pilotnet_model.state_dict(), config.MODEL_SAVE_PATH)
                         log_msg += " (Model saved at end of training)"
-                
+
                 print(log_msg)
 
             print("\nTraining completed.")
-            if not (val_loader and len(val_loader) > 0): # If no val_loader, best_val_loss is inf
-                 if os.path.exists(config.MODEL_SAVE_PATH):
+            if not (
+                val_loader and len(val_loader) > 0
+            ):  # If no val_loader, best_val_loss is inf
+                if os.path.exists(config.MODEL_SAVE_PATH):
                     print(f"Model saved to: {config.MODEL_SAVE_PATH}")
-            elif best_val_loss != float('inf'):
-                print(f"Best model (val_loss: {best_val_loss:.4f}) saved to: {config.MODEL_SAVE_PATH}")
+            elif best_val_loss != float("inf"):
+                print(
+                    f"Best model (val_loss: {best_val_loss:.4f}) saved to: {config.MODEL_SAVE_PATH}"
+                )
 
         except Exception as e:
             print(f"\nAn error occurred during training or saving the model: {e}")
             import traceback
+
             traceback.print_exc()
-            return # Exit if training failed
+            return  # Exit if training failed
 
     elif args.mode == "test":
         if not os.path.exists(config.MODEL_SAVE_PATH):
-            print(f"ERROR: Model file not found at {config.MODEL_SAVE_PATH} for testing.")
+            print(
+                f"ERROR: Model file not found at {config.MODEL_SAVE_PATH} for testing."
+            )
             return
         pilotnet_model = build_pilotnet_model(input_channels=config.IMG_CHANNELS)
-        pilotnet_model.load_state_dict(torch.load(config.MODEL_SAVE_PATH, map_location=device))
+        pilotnet_model.load_state_dict(
+            torch.load(config.MODEL_SAVE_PATH, map_location=device)
+        )
         pilotnet_model.to(device)
         print(f"Loaded model from {config.MODEL_SAVE_PATH} for testing.")
 
@@ -165,7 +184,7 @@ def main():
         plt.ylabel("Steering Angle")
         plt.legend()
         plt.grid(True)
-        
+
         # Ensure the directory for saving the plot exists
         plot_dir = os.path.dirname(args.plot_save_path)
         if plot_dir and not os.path.exists(plot_dir):
@@ -177,9 +196,12 @@ def main():
         # plt.show() # Keep this commented out or remove if interactive display is not needed
 
     elif args.mode == "test":
-        print("WARNING: Test loader is not available or empty. Cannot perform evaluation on test set.")
-    else: # train mode but no test_loader
+        print(
+            "WARNING: Test loader is not available or empty. Cannot perform evaluation on test set."
+        )
+    else:  # train mode but no test_loader
         print("INFO: No test_loader available to perform evaluation after training.")
+
 
 if __name__ == "__main__":
     # e.g., in the terminal: export KERAS_BACKEND="torch" && python train.py

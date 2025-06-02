@@ -5,7 +5,10 @@ import dearpygui.dearpygui as dpg
 from gui_utils.player import Player
 from gui_utils.dataset_preparator import DatasetPreparator
 from gui_utils.model_evaluator import ModelEvaluator
-from gui_utils.training_ui import create_training_tab_content, update_training_log_display
+from gui_utils.training_ui import (
+    create_training_tab_content,
+    update_training_log_display,
+)
 
 APP_WINDOW_WIDTH = 660
 APP_WINDOW_HEIGHT = 830
@@ -17,7 +20,7 @@ dpg.create_context()
 dpg.create_viewport(
     title="End2end Lane Assistance App",
     width=APP_WINDOW_WIDTH,
-    height=APP_WINDOW_HEIGHT # Adjusted for potential scrollbar with many tabs
+    height=APP_WINDOW_HEIGHT,  # Adjusted for potential scrollbar with many tabs
 )
 
 with dpg.texture_registry():
@@ -38,7 +41,7 @@ with dpg.window(
     label="End2end Lane Assistance App",
     width=APP_WINDOW_WIDTH,
     height=APP_WINDOW_HEIGHT,
-    tag="app_primary_window" # Added tag for error popup centering
+    tag="app_primary_window",  # Added tag for error popup centering
 ):
     with dpg.tab_bar(tag="main_tab_bar") as main_tab_bar:
 
@@ -181,7 +184,8 @@ with dpg.window(
 
             with dpg.group(horizontal=True):
                 dpg.add_button(
-                    label="Save dataset metadata", callback=dataset_preparator.on_save_dataset
+                    label="Save dataset metadata",
+                    callback=dataset_preparator.on_save_dataset,
                 )
 
         # The Model Training tab is now created by create_training_tab_content
