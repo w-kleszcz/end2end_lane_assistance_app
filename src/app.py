@@ -4,10 +4,11 @@ import dearpygui.dearpygui as dpg
 
 from gui_utils.player import Player
 from gui_utils.dataset_preparator import DatasetPreparator
+from gui_utils.model_evaluator import ModelEvaluator
 from gui_utils.training_ui import create_training_tab_content, update_training_log_display
 
 APP_WINDOW_WIDTH = 660
-APP_WINDOW_HEIGHT = 800
+APP_WINDOW_HEIGHT = 830
 UI_INPUT_WIDTH_LONG = 550
 
 # ---------- Create texture buffer ----------
@@ -187,11 +188,125 @@ with dpg.window(
         create_training_tab_content(parent_tab_id=main_tab_bar)
 
         with dpg.tab(label="Model Evaluation"):
-            dpg.add_text("Model evaluation will be implemented here.")
-            dpg.add_button(
-                label="Evaluate Model",
-                callback=lambda: print("Model evaluation started."),
+
+            model_evaluator = ModelEvaluator(
+                texture_id=evaluator_player_texture_id, namespace="evaluator"
             )
+
+            dpg.add_text("Dataset specs file:")
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Browse",
+                    callback=lambda: dpg.show_item(
+                        "evaluator::dataset_specs_file_dialog"
+                    ),
+                )
+                dpg.add_input_text(
+                    tag="evaluator::dataset_yaml_file_path",
+                    width=UI_INPUT_WIDTH_LONG,
+                    readonly=True,
+                )  # Textbox for file path
+
+            dpg.add_text("Model file:")
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Browse",
+                    callback=lambda: dpg.show_item("evaluator::model_file_dialog"),
+                )
+                dpg.add_input_text(
+                    tag="evaluator::model_file_path",
+                    width=UI_INPUT_WIDTH_LONG,
+                    readonly=True,
+                )  # Textbox for file path
+
+            # File Dialog (for selecting a single file)
+            with dpg.file_dialog(
+                directory_selector=False,
+                show=False,
+                tag="evaluator::dataset_specs_file_dialog",
+                callback=model_evaluator.set_dataset_yaml,
+                width=500,
+                height=400,
+            ):
+                dpg.add_file_extension(".yaml")
+
+            # File Dialog (for selecting a single file)
+            with dpg.file_dialog(
+                directory_selector=False,
+                show=False,
+                tag="evaluator::model_file_dialog",
+                callback=model_evaluator.set_model,
+                width=500,
+                height=400,
+            ):
+                dpg.add_file_extension(".keras")
+
+            dpg.add_image(evaluator_player_texture_id)
+
+            dpg.add_slider_int(
+                tag="evaluator::frame_slider",
+                label="",
+                min_value=0,
+                max_value=0,
+                default_value=0,
+                width=640,
+                callback=model_evaluator.on_player_slider_change,
+                enabled=True,
+            )
+
+            with dpg.group(horizontal=True):
+                dpg.add_spacer(width=90)
+                dpg.add_text("MEASURED ANGLE = ")
+                dpg.add_input_float(
+                    tag="evaluator::measured_angle",
+                    width=100,
+                    default_value=0.0,
+                    readonly=True,
+                )
+                dpg.add_text("PREDICTED ANGLE = ")
+                dpg.add_input_float(
+                    tag="evaluator::predicted_angle",
+                    width=100,
+                    default_value=0.0,
+                    readonly=True,
+                )
+
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Play", callback=model_evaluator.on_play)
+                dpg.add_button(label="Pause", callback=model_evaluator.on_pause)
+                dpg.add_button(label="Step Back", callback=model_evaluator.on_step_back)
+                dpg.add_button(
+                    label="Step Forward", callback=model_evaluator.on_step_forward
+                )
+                dpg.add_button(
+                    label="Speed Up", callback=model_evaluator.on_playback_speed_up
+                )
+                dpg.add_button(
+                    label="Speed Reset",
+                    callback=model_evaluator.on_playback_speed_reset,
+                )
+
+            with dpg.group(horizontal=True):
+                dpg.add_text("N =")
+                dpg.add_input_int(
+                    tag="evaluator::n_frames_jump", width=100, default_value=100
+                )
+                dpg.add_button(
+                    label="Jump N Frames Back",
+                    tag="evaluator::jump_n_frames_bck",
+                    callback=model_evaluator.on_jump_n_frames_bck,
+                )
+                dpg.add_button(
+                    label="Jump N Frames Forward",
+                    tag="evaluator::jump_n_frames_fwd",
+                    callback=model_evaluator.on_jump_n_frames_fwd,
+                )
+
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Generate plot",
+                    # callback=dataset_preparator.on_save_dataset
+                )
 
         with dpg.tab(label="Model Deployment"):
             dpg.add_text("Model deployment will be implemented here.")
