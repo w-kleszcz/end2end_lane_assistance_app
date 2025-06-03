@@ -243,7 +243,7 @@ with dpg.window(
                 width=500,
                 height=400,
             ):
-                dpg.add_file_extension(".keras")
+                dpg.add_file_extension(".pth")
 
             dpg.add_image(evaluator_player_texture_id)
 
@@ -259,17 +259,23 @@ with dpg.window(
             )
 
             with dpg.group(horizontal=True):
-                dpg.add_spacer(width=90)
-                dpg.add_text("MEASURED ANGLE = ")
+                dpg.add_text("MEASURED ANGLE=")
                 dpg.add_input_float(
                     tag="evaluator::measured_angle",
                     width=100,
                     default_value=0.0,
                     readonly=True,
                 )
-                dpg.add_text("PREDICTED ANGLE = ")
+                dpg.add_text("PREDICTED ANGLE=")
                 dpg.add_input_float(
                     tag="evaluator::predicted_angle",
+                    width=100,
+                    default_value=0.0,
+                    readonly=True,
+                )
+                dpg.add_text("ERROR=")
+                dpg.add_input_float(
+                    tag="evaluator::angle_error",
                     width=100,
                     default_value=0.0,
                     readonly=True,

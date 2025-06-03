@@ -1,6 +1,7 @@
 import dearpygui.dearpygui as dpg
 from .player import Player  # Assuming Player is in the same directory
-from tensorflow.keras.models import load_model
+import torch
+from model.model import PilotNetPyTorch
 
 
 class ModelEvaluator(Player):
@@ -13,7 +14,14 @@ class ModelEvaluator(Player):
         self.image_annotations_file = image_annotations_file
 
     def set_model(self, sender, app_data):
-        self.model = load_model(app_data["file_path_name"])
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = PilotNetPyTorch()
+        self.model.load_state_dict(
+            torch.load(app_data["file_path_name"], map_location=self.device)
+        )
+        self.model.eval()
+        self.model.to(self.device)
+
         dpg.set_value(
             self.tag_with_namespace("model_file_path"), app_data["file_path_name"]
         )

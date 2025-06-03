@@ -9,6 +9,7 @@ import dearpygui.dearpygui as dpg
 from natsort import natsorted
 from PIL import Image
 from pathlib import Path
+import torch
 
 from model.data_loader import (
     create_dataloaders_from_yaml,
@@ -48,6 +49,16 @@ class Player:
         self.model = None
         self.image_annotations_file = None
         self.img_to_steering = None
+        self.device = None
+
+        with dpg.theme() as self.red_theme:
+            with dpg.theme_component(dpg.mvInputFloat):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, (255, 0, 0, 255))  # Red
+
+        # Default text theme (inherits app's default)
+        with dpg.theme() as self.default_theme:
+            with dpg.theme_component(dpg.mvInputFloat):
+                dpg.add_theme_color(dpg.mvThemeCol_Text, (255, 255, 255, 255))
 
     def setup_player_from_yaml_data(self, yaml_file_path):
         with open(yaml_file_path, "r") as file:
@@ -121,9 +132,12 @@ class Player:
 
             image = transform(image)
             image = image.unsqueeze(0)
+            image = image.to(self.device)
 
-            predicted_angle = self.model.predict(image)
-            pred = predicted_angle[0][0]
+            self.model.eval()  # Just to be safe
+            with torch.no_grad():
+                output = self.model(image)  # Shape [1, 1] or [1]
+                pred = output.item()
 
             img_name = Path(self.image_paths[index]).name
             img_with_steering = next(
@@ -137,6 +151,16 @@ class Player:
             measured = img_with_steering[1] if img_with_steering else None
             dpg.set_value(self.tag_with_namespace("predicted_angle"), pred)
             dpg.set_value(self.tag_with_namespace("measured_angle"), measured)
+            dpg.set_value(self.tag_with_namespace("angle_error"), pred - measured)
+
+            if abs(pred - measured) > 10.0:
+                dpg.set_item_theme(
+                    self.tag_with_namespace("angle_error"), self.red_theme
+                )
+            else:
+                dpg.set_item_theme(
+                    self.tag_with_namespace("angle_error"), self.default_theme
+                )
 
     def play_loop(self):
         while self.playing and self.get_number_of_valid_frames() > 0:
