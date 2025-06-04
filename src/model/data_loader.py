@@ -6,6 +6,9 @@ from torchvision import transforms
 from PIL import Image
 from sklearn.model_selection import train_test_split
 import yaml  # Added for YAML parsing
+import cv2
+import torchvision.transforms.functional as TF
+import numpy as np
 
 # Import configuration
 from . import config
@@ -49,24 +52,58 @@ class DrivingDataset(Dataset):
         return image, torch.tensor([steering_angle], dtype=torch.float32)
 
 
+def crop_top_and_bottom(img):
+    width, height = img.size
+    top_crop = int(height * 0.4)
+    bottom_crop = int(height * 0.1)
+    return img.crop((0, top_crop, width, height - bottom_crop))  # (left, upper, right, lower)
+
+def apply_sobel_edge(image_tensor):
+    """
+    Applies Sobel filter to emphasize edges. Operates on a PyTorch tensor (C x H x W).
+    Returns a tensor with the same shape and dtype.
+    """
+    # Convert to grayscale: assume input is in range [-0.5, 0.5]
+    grayscale = TF.rgb_to_grayscale(image_tensor + 0.5)  # shift back to [0, 1] for OpenCV compatibility
+
+    # Convert to numpy and scale to 0-255 uint8
+    grayscale_np = grayscale.squeeze(0).numpy() * 255.0
+    grayscale_np = grayscale_np.astype(np.uint8)
+
+    # Apply Sobel filter
+    sobel_x = cv2.Sobel(grayscale_np, cv2.CV_64F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(grayscale_np, cv2.CV_64F, 0, 1, ksize=3)
+    sobel = np.sqrt(sobel_x ** 2 + sobel_y ** 2)
+    sobel = np.clip(sobel / sobel.max(), 0, 1)
+
+    # Convert back to tensor and expand to 1 channel, then repeat to match RGB shape
+    sobel_tensor = torch.tensor(sobel, dtype=torch.float32).unsqueeze(0)  # 1 x H x W
+    sobel_rgb = sobel_tensor.repeat(3, 1, 1)  # 3 x H x W to match input channels
+
+    return sobel_rgb - 0.5  # back to [-0.5, 0.5]
+
 # Definition of image transformations
 def get_data_transforms():
     """Returns a dictionary of transformations for training and validation sets."""
     return {
         "train": transforms.Compose(
             [
+                transforms.Lambda(crop_top_and_bottom),
                 transforms.Resize((config.IMG_HEIGHT, config.IMG_WIDTH)),
                 transforms.ToTensor(),  # Scales to [0.0, 1.0] and changes to C x H x W
                 transforms.Lambda(lambda x: x - 0.5),  # Scales to [-0.5, 0.5]
+                transforms.Lambda(apply_sobel_edge),
                 # Augmentations for the training set can be added here, e.g.:
                 # transforms.ColorJitter(brightness=0.2, contrast=0.2),
             ]
         ),
         "val": transforms.Compose(
             [
+                transforms.Lambda(crop_top_and_bottom),
                 transforms.Resize((config.IMG_HEIGHT, config.IMG_WIDTH)),
                 transforms.ToTensor(),
                 transforms.Lambda(lambda x: x - 0.5),  # Scales to [-0.5, 0.5]
+                transforms.Lambda(apply_sobel_edge),
             ]
         ),
     }
