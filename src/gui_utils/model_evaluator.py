@@ -2,6 +2,7 @@ import dearpygui.dearpygui as dpg
 from .player import Player  # Assuming Player is in the same directory
 import torch
 from model.model import PilotNetPyTorch
+from torchcam.methods import SmoothGradCAMpp
 
 
 class ModelEvaluator(Player):
@@ -20,6 +21,7 @@ class ModelEvaluator(Player):
             torch.load(app_data["file_path_name"], map_location=self.device)
         )
         self.model.eval()
+        self.cam_extractor = SmoothGradCAMpp(self.model, target_layer="conv5")
         self.model.to(self.device)
 
         dpg.set_value(

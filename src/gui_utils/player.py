@@ -10,6 +10,9 @@ from natsort import natsorted
 from PIL import Image
 from pathlib import Path
 import torch
+from torchcam.methods import SmoothGradCAMpp
+from torchvision.transforms import ToPILImage
+import matplotlib.pyplot as plt
 
 from model.data_loader import (
     create_dataloaders_from_yaml,
@@ -50,6 +53,7 @@ class Player:
         self.image_annotations_file = None
         self.img_to_steering = None
         self.device = None
+        self.cam_extractor = None
 
         with dpg.theme() as self.red_theme:
             with dpg.theme_component(dpg.mvInputFloat):
@@ -124,21 +128,39 @@ class Player:
         img = cv2.resize(img, (640, 480))
         img = img.astype(np.float32) / 255.0
 
-        dpg.set_value(self.texture_id, img.flatten())
-
-        if self.model is not None:
-            image = Image.open(self.image_paths[index]).convert("RGB")
+        if self.model is None:
+            dpg.set_value(self.texture_id, img.flatten())
+        else:
+            orig_image = Image.open(self.image_paths[index]).convert("RGB")
             transform = get_data_transforms()["val"]
 
-            image = transform(image)
+            image = transform(orig_image)
             image = image.unsqueeze(0)
             image = image.to(self.device)
 
             self.model.eval()  # Just to be safe
-            with torch.no_grad():
+            with torch.enable_grad():
                 output = self.model(image)  # Shape [1, 1] or [1]
                 pred = output.item()
 
+            class_idx = 0
+            activation_map = self.cam_extractor(class_idx, output)
+            # Get CAM and ensure it's on CPU
+            cam = activation_map[0].detach().cpu()
+
+            # Fix dimensionality: add batch and channel dimensions if needed
+            if cam.dim() == 2:
+                cam = cam.unsqueeze(0).unsqueeze(0)  # [1, 1, H, W]
+            elif cam.dim() == 3:
+                cam = cam.unsqueeze(0)  # [1, C, H, W]
+
+            cam_resized = torch.nn.functional.interpolate(
+                cam, size=(256, 455), mode="bilinear", align_corners=False
+            )
+            cam_resized = cam_resized.squeeze()
+
+            # Convert to RGB heatmap and save
+            heatmap = ToPILImage()(cam_resized.expand(3, -1, -1))
             img_name = Path(self.image_paths[index]).name
             img_with_steering = next(
                 (
@@ -154,13 +176,25 @@ class Player:
             dpg.set_value(self.tag_with_namespace("angle_error"), pred - measured)
 
             if abs(pred - measured) > 10.0:
-                dpg.set_item_theme(
+                dpg.bind_item_theme(
                     self.tag_with_namespace("angle_error"), self.red_theme
                 )
             else:
-                dpg.set_item_theme(
+                dpg.bind_item_theme(
                     self.tag_with_namespace("angle_error"), self.default_theme
                 )
+
+            overlay = Image.blend(orig_image, heatmap, alpha=0.3)
+            # overlay.save("overlay_" + img_name)
+            overlay = overlay.convert("RGBA")  # Convert to RGBA
+            overlay = overlay.resize(
+                (640, 480)
+            )  # Resize to match DPG texture size if needed
+
+            overlay_np = np.array(overlay).astype(np.float32) / 255.0  # Normalize
+            overlay_flat = overlay_np.flatten()
+
+            dpg.set_value(self.texture_id, overlay_flat)
 
     def play_loop(self):
         while self.playing and self.get_number_of_valid_frames() > 0:
