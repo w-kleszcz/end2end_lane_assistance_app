@@ -325,67 +325,20 @@ def create_dataloaders_from_yaml(
     else:
         indices_to_skip_set = set(indices_to_skip_yaml)
 
-    samples_after_skip = [
-        sample
-        for i, sample in enumerate(all_parsed_samples)
-        if i not in indices_to_skip_set
-    ]
-
-    num_skipped = len(all_parsed_samples) - len(samples_after_skip)
-    if num_skipped > 0:
-        print(
-            f"INFO: Skipped {num_skipped} samples based on 'indices_to_skip' from YAML."
-        )
-
-    if not samples_after_skip:
-        print(
-            "ERROR: All samples were skipped or no samples remained after filtering 'indices_to_skip'."
-        )
-        return None, None, None
-
-    # Split into test set and remaining samples for train/val based on YAML indices
     test_set_idx_start = data_cfg.get("test_set_idx_start")
     test_set_idx_end = data_cfg.get("test_set_idx_end")
 
     dedicated_test_samples = []
     samples_for_train_val_split = []
 
-    if test_set_idx_start is not None and test_set_idx_end is not None:
-        if (
-            not (
-                isinstance(test_set_idx_start, int)
-                and isinstance(test_set_idx_end, int)
-            )
-            or test_set_idx_start < 0
-            or test_set_idx_end > len(all_parsed_samples)
-            or test_set_idx_start >= test_set_idx_end
-        ):
-            print(
-                f"ERROR: Invalid 'test_set_idx_start' ({test_set_idx_start}) or "
-                f"'test_set_idx_end' ({test_set_idx_end}) for {len(samples_after_skip)} available samples after skipping. "
-                "Proceeding with all available samples for train/validation split."
-            )
-            samples_for_train_val_split = samples_after_skip
+    for i, sample in enumerate(all_parsed_samples):
+        if i in indices_to_skip_set:
+            continue
+
+        if i >= test_set_idx_start and i <= test_set_idx_end:
+            dedicated_test_samples.append(sample)
         else:
-            dedicated_test_samples = samples_after_skip[
-                test_set_idx_start:test_set_idx_end
-            ]
-            samples_for_train_val_split = (
-                samples_after_skip[:test_set_idx_start]
-                + samples_after_skip[test_set_idx_end:]
-            )
-            print(
-                f"INFO: Defined test set from YAML: {len(dedicated_test_samples)} samples (indices {test_set_idx_start}-{test_set_idx_end-1})."
-            )
-            print(
-                f"INFO: Remaining samples for train/val split: {len(samples_for_train_val_split)}."
-            )
-    else:
-        print(
-            "INFO: 'test_set_idx_start' and/or 'test_set_idx_end' not found in YAML. "
-            "All samples after skipping will be used for train/validation split. No dedicated test set from YAML."
-        )
-        samples_for_train_val_split = samples_after_skip
+            samples_for_train_val_split.append(sample)
 
     data_transforms = get_data_transforms()
 
