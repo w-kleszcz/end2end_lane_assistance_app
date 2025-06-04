@@ -56,7 +56,10 @@ def crop_top_and_bottom(img):
     width, height = img.size
     top_crop = int(height * 0.4)
     bottom_crop = int(height * 0.1)
-    return img.crop((0, top_crop, width, height - bottom_crop))  # (left, upper, right, lower)
+    return img.crop(
+        (0, top_crop, width, height - bottom_crop)
+    )  # (left, upper, right, lower)
+
 
 def apply_sobel_edge(image_tensor):
     """
@@ -64,7 +67,9 @@ def apply_sobel_edge(image_tensor):
     Returns a tensor with the same shape and dtype.
     """
     # Convert to grayscale: assume input is in range [-0.5, 0.5]
-    grayscale = TF.rgb_to_grayscale(image_tensor + 0.5)  # shift back to [0, 1] for OpenCV compatibility
+    grayscale = TF.rgb_to_grayscale(
+        image_tensor + 0.5
+    )  # shift back to [0, 1] for OpenCV compatibility
 
     # Convert to numpy and scale to 0-255 uint8
     grayscale_np = grayscale.squeeze(0).numpy() * 255.0
@@ -73,7 +78,7 @@ def apply_sobel_edge(image_tensor):
     # Apply Sobel filter
     sobel_x = cv2.Sobel(grayscale_np, cv2.CV_64F, 1, 0, ksize=3)
     sobel_y = cv2.Sobel(grayscale_np, cv2.CV_64F, 0, 1, ksize=3)
-    sobel = np.sqrt(sobel_x ** 2 + sobel_y ** 2)
+    sobel = np.sqrt(sobel_x**2 + sobel_y**2)
     sobel = np.clip(sobel / sobel.max(), 0, 1)
 
     # Convert back to tensor and expand to 1 channel, then repeat to match RGB shape
@@ -81,6 +86,7 @@ def apply_sobel_edge(image_tensor):
     sobel_rgb = sobel_tensor.repeat(3, 1, 1)  # 3 x H x W to match input channels
 
     return sobel_rgb - 0.5  # back to [-0.5, 0.5]
+
 
 # Definition of image transformations
 def get_data_transforms():
