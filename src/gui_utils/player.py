@@ -13,6 +13,7 @@ import torch
 from torchcam.methods import SmoothGradCAMpp
 from torchvision.transforms import ToPILImage
 import matplotlib.pyplot as plt
+from model.model import PilotNetPyTorch
 
 from model.data_loader import (
     create_dataloaders_from_yaml,
@@ -94,6 +95,20 @@ class Player:
         )
         dpg.configure_item(self.tag_with_namespace("frame_slider"), enabled=True)
 
+    def set_model(self, sender, app_data):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = PilotNetPyTorch()
+        self.model.load_state_dict(
+            torch.load(app_data["file_path_name"], map_location=self.device)
+        )
+        self.model.eval()
+        self.cam_extractor = SmoothGradCAMpp(self.model, target_layer="conv5")
+        self.model.to(self.device)
+
+        dpg.set_value(
+            self.tag_with_namespace("model_file_path"), app_data["file_path_name"]
+        )
+
     def tag_with_namespace(self, tag):
         if not self.namespace:
             return tag
@@ -161,28 +176,34 @@ class Player:
 
             # Convert to RGB heatmap and save
             heatmap = ToPILImage()(cam_resized.expand(3, -1, -1))
-            img_name = Path(self.image_paths[index]).name
-            img_with_steering = next(
-                (
-                    img_steering
-                    for img_steering in self.img_to_steering
-                    if img_steering[0] == img_name
-                ),
-                None,
-            )
-            measured = img_with_steering[1] if img_with_steering else None
-            dpg.set_value(self.tag_with_namespace("predicted_angle"), pred)
-            dpg.set_value(self.tag_with_namespace("measured_angle"), measured)
-            dpg.set_value(self.tag_with_namespace("angle_error"), pred - measured)
+            if self.img_to_steering is not None:
+                img_name = Path(self.image_paths[index]).name
+                img_with_steering = next(
+                    (
+                        img_steering
+                        for img_steering in self.img_to_steering
+                        if img_steering[0] == img_name
+                    ),
+                    None,
+                )
+                measured = img_with_steering[1] if img_with_steering else None
 
-            if abs(pred - measured) > 10.0:
-                dpg.bind_item_theme(
-                    self.tag_with_namespace("angle_error"), self.red_theme
-                )
-            else:
-                dpg.bind_item_theme(
-                    self.tag_with_namespace("angle_error"), self.default_theme
-                )
+                if measured is not None:
+                    dpg.set_value(self.tag_with_namespace("measured_angle"), measured)
+                    dpg.set_value(
+                        self.tag_with_namespace("angle_error"), pred - measured
+                    )
+
+                    if abs(pred - measured) > 10.0:
+                        dpg.bind_item_theme(
+                            self.tag_with_namespace("angle_error"), self.red_theme
+                        )
+                    else:
+                        dpg.bind_item_theme(
+                            self.tag_with_namespace("angle_error"), self.default_theme
+                        )
+
+            dpg.set_value(self.tag_with_namespace("predicted_angle"), pred)
 
             overlay = Image.blend(orig_image, heatmap, alpha=0.3)
             # overlay.save("overlay_" + img_name)

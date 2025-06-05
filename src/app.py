@@ -36,6 +36,11 @@ with dpg.texture_registry():
         640, 480, dummy_image.flatten(), tag=evaluator_player_texture_id
     )
 
+    deployed_player_texture_id = dpg.generate_uuid()
+    dpg.add_dynamic_texture(
+        640, 480, dummy_image.flatten(), tag=deployed_player_texture_id
+    )
+
 # ---------- GUI Layout ----------
 with dpg.window(
     label="End2end Lane Assistance App",
@@ -319,11 +324,118 @@ with dpg.window(
                 )
 
         with dpg.tab(label="Model Deployment"):
-            dpg.add_text("Model deployment will be implemented here.")
-            dpg.add_button(
-                label="Deploy Model",
-                callback=lambda: print("Model deployment started."),
+
+            deployed_model_player = Player(
+                texture_id=deployed_player_texture_id, namespace="deployed"
             )
+
+            dpg.add_text("Images folder:")
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Browse",
+                    callback=lambda: dpg.show_item("deployed::images_folder_dialog"),
+                )
+                dpg.add_input_text(
+                    tag="deployed::images_folder_path",
+                    width=UI_INPUT_WIDTH_LONG,
+                    readonly=True,
+                )  # Textbox for file path
+
+            dpg.add_text("Model file:")
+            with dpg.group(horizontal=True):
+                dpg.add_button(
+                    label="Browse",
+                    callback=lambda: dpg.show_item("deployed::model_file_dialog"),
+                )
+                dpg.add_input_text(
+                    tag="deployed::model_file_path",
+                    width=UI_INPUT_WIDTH_LONG,
+                    readonly=True,
+                )  # Textbox for file path
+
+            # File Dialog (for selecting a single file)
+            with dpg.file_dialog(
+                directory_selector=True,
+                show=False,
+                tag="deployed::images_folder_dialog",
+                callback=deployed_model_player.on_folder_selected,
+                width=500,
+                height=400,
+            ):
+                dpg.add_file_extension(".*")
+
+            # File Dialog (for selecting a single file)
+            with dpg.file_dialog(
+                directory_selector=False,
+                show=False,
+                tag="deployed::model_file_dialog",
+                callback=deployed_model_player.set_model,
+                width=500,
+                height=400,
+            ):
+                dpg.add_file_extension(".pth")
+
+            dpg.add_image(deployed_player_texture_id)
+
+            dpg.add_slider_int(
+                tag="deployed::frame_slider",
+                label="",
+                min_value=0,
+                max_value=0,
+                default_value=0,
+                width=640,
+                callback=deployed_model_player.on_player_slider_change,
+                enabled=True,
+            )
+
+            with dpg.group(horizontal=True):
+                dpg.add_text("PREDICTED ANGLE=")
+                dpg.add_input_float(
+                    tag="deployed::predicted_angle",
+                    width=100,
+                    default_value=0.0,
+                    readonly=True,
+                )
+
+            with dpg.group(horizontal=True):
+                dpg.add_button(label="Play", callback=deployed_model_player.on_play)
+                dpg.add_button(label="Pause", callback=deployed_model_player.on_pause)
+                dpg.add_button(
+                    label="Step Back", callback=deployed_model_player.on_step_back
+                )
+                dpg.add_button(
+                    label="Step Forward", callback=deployed_model_player.on_step_forward
+                )
+                dpg.add_button(
+                    label="Speed Up",
+                    callback=deployed_model_player.on_playback_speed_up,
+                )
+                dpg.add_button(
+                    label="Speed Reset",
+                    callback=deployed_model_player.on_playback_speed_reset,
+                )
+
+            with dpg.group(horizontal=True):
+                dpg.add_text("N =")
+                dpg.add_input_int(
+                    tag="deployed::n_frames_jump", width=100, default_value=100
+                )
+                dpg.add_button(
+                    label="Jump N Frames Back",
+                    tag="deployed::jump_n_frames_bck",
+                    callback=deployed_model_player.on_jump_n_frames_bck,
+                )
+                dpg.add_button(
+                    label="Jump N Frames Forward",
+                    tag="deployed::jump_n_frames_fwd",
+                    callback=deployed_model_player.on_jump_n_frames_fwd,
+                )
+
+            # with dpg.group(horizontal=True):
+            #     dpg.add_button(
+            #         label="Generate plot",
+            #         # callback=dataset_preparator.on_save_dataset
+            #     )
 
 # ---------- Launch ----------
 dpg.setup_dearpygui()

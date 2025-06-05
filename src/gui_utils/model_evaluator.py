@@ -1,8 +1,5 @@
 import dearpygui.dearpygui as dpg
 from .player import Player  # Assuming Player is in the same directory
-import torch
-from model.model import PilotNetPyTorch
-from torchcam.methods import SmoothGradCAMpp
 
 
 class ModelEvaluator(Player):
@@ -13,20 +10,6 @@ class ModelEvaluator(Player):
 
         self.dataset_yaml = None
         self.image_annotations_file = image_annotations_file
-
-    def set_model(self, sender, app_data):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = PilotNetPyTorch()
-        self.model.load_state_dict(
-            torch.load(app_data["file_path_name"], map_location=self.device)
-        )
-        self.model.eval()
-        self.cam_extractor = SmoothGradCAMpp(self.model, target_layer="conv5")
-        self.model.to(self.device)
-
-        dpg.set_value(
-            self.tag_with_namespace("model_file_path"), app_data["file_path_name"]
-        )
 
     def set_dataset_yaml(self, sender, app_data):
         selected_file_path = app_data["file_path_name"]
