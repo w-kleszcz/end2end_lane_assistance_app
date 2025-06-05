@@ -16,6 +16,7 @@ NUM_EPOCHS = 10  # You can increase this for actual training
 LEARNING_RATE = 1e-4
 VAL_SPLIT_SIZE = 0.2  # 20% of data for the validation set
 RANDOM_STATE = 42  # For ensuring reproducibility of data split
+LAMBDA_SMOOTHNESS = 0.01 # Waga dla kary za gwałtowne zmiany kąta skrętu
 
 # --- Model Saving ---
 MODEL_SAVE_PATH = "models/pilotnet_pytorch.pth"

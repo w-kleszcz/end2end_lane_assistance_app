@@ -30,6 +30,7 @@ VAL_SPLIT_SIZE_INPUT_TAG = "training_ui::val_split_size_input_tag"
 RANDOM_STATE_INPUT_TAG = "training_ui::random_state_input_tag"
 NUM_WORKERS_INPUT_TAG = "training_ui::num_workers_input_tag"
 EARLY_STOPPING_PATIENCE_INPUT_TAG = "training_ui::early_stopping_patience_input_tag"
+LAMBDA_SMOOTHNESS_INPUT_TAG = "training_ui::lambda_smoothness_input_tag"
 
 
 def log_to_gui(message):
@@ -63,6 +64,7 @@ def run_training_thread(
     random_state,
     num_workers,
     early_stopping_patience,
+    lambda_smoothness,
 ):
     """The main logic for training, adapted from train.py."""
     try:
@@ -81,6 +83,7 @@ def run_training_thread(
         log_to_gui(f"  Random State: {random_state}\n")
         log_to_gui(f"  Num Workers: {num_workers}\n")
         log_to_gui(f"  Early Stopping Patience: {early_stopping_patience}\n\n")
+        log_to_gui(f"  Lambda Smoothness: {lambda_smoothness}\n\n")
 
         train_loader, val_loader, test_loader = create_dataloaders_from_yaml(
             data_config_path,
@@ -109,7 +112,7 @@ def run_training_thread(
         log_to_gui("Model built.\n" + str(pilotnet_model) + "\n")
 
         optimizer = optim.Adam(pilotnet_model.parameters(), lr=learning_rate)
-        criterion = nn.MSELoss()
+        criterion_mse = nn.MSELoss()
         log_to_gui("Optimizer and loss function set up.\n")
 
         log_to_gui(f"Starting training for {num_epochs} epochs...\n")
@@ -128,10 +131,16 @@ def run_training_thread(
                 inputs, labels = inputs.to(device), labels.to(device)
                 optimizer.zero_grad()
                 outputs = pilotnet_model(inputs)
-                loss = criterion(outputs, labels)
-                loss.backward()
+                loss_mse = criterion_mse(outputs, labels)
+                loss_smoothness = torch.tensor(0.0, device=device)
+                if outputs.size(0) > 1 and lambda_smoothness > 0:
+                    smoothness_diff = outputs[1:] - outputs[:-1]
+                    loss_smoothness = torch.mean(smoothness_diff**2)
+                
+                total_loss = loss_mse + lambda_smoothness * loss_smoothness
+                total_loss.backward()
                 optimizer.step()
-                running_loss += loss.item()
+                running_loss += total_loss.item()
 
             avg_train_loss = running_loss / len(train_loader)
             current_logs = {"loss": avg_train_loss}
@@ -146,8 +155,17 @@ def run_training_thread(
                             device
                         )
                         outputs_val = pilotnet_model(inputs_val)
-                        loss_val = criterion(outputs_val, labels_val)
-                        val_running_loss += loss_val.item()
+                        
+                        loss_mse_val = criterion_mse(outputs_val, labels_val)
+
+                        loss_smoothness_val = torch.tensor(0.0, device=device)
+                        if outputs_val.size(0) > 1 and lambda_smoothness > 0:
+                            smoothness_diff_val = outputs_val[1:] - outputs_val[:-1]
+                            loss_smoothness_val = torch.mean(smoothness_diff_val**2)
+                        
+                        total_loss_val = loss_mse_val + lambda_smoothness * loss_smoothness_val
+                        val_running_loss += total_loss_val.item()
+
                 avg_val_loss = val_running_loss / len(val_loader)
                 current_logs["val_loss"] = avg_val_loss
                 log_to_gui(format_log_message(epoch, current_logs, num_epochs))
@@ -254,6 +272,7 @@ def on_start_training_clicked():
     random_state = dpg.get_value(RANDOM_STATE_INPUT_TAG)
     num_workers = dpg.get_value(NUM_WORKERS_INPUT_TAG)
     early_stopping_patience = dpg.get_value(EARLY_STOPPING_PATIENCE_INPUT_TAG)
+    lambda_smoothness = dpg.get_value(LAMBDA_SMOOTHNESS_INPUT_TAG)
 
     # Basic Validations
     if not data_config or not os.path.isfile(data_config):
@@ -279,6 +298,7 @@ def on_start_training_clicked():
             random_state,
             num_workers,
             early_stopping_patience,
+            lambda_smoothness,
         ),
         daemon=True,
     )
@@ -436,6 +456,15 @@ def create_training_tab_content(parent_tab_id):
                 tag=EARLY_STOPPING_PATIENCE_INPUT_TAG,
                 default_value=5,
                 min_value=0,
+                width=150,
+            )
+            dpg.add_input_float(
+                label="Lambda Smoothness",
+                tag=LAMBDA_SMOOTHNESS_INPUT_TAG,
+                default_value=global_train_config.LAMBDA_SMOOTHNESS if hasattr(global_train_config, 'LAMBDA_SMOOTHNESS') else 0.01, # Use default from config if exists
+                format="%.4f",
+                min_value=0.0,
+                step=0.001,
                 width=150,
             )
 

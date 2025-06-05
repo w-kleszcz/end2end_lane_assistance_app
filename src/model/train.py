@@ -79,7 +79,7 @@ def main():
         # --- 3. Model Compilation ---
         print("Setting up optimizer and loss function...")
         optimizer = optim.Adam(pilotnet_model.parameters(), lr=config.LEARNING_RATE)
-        criterion = nn.MSELoss()
+        criterion_mse = nn.MSELoss() # Główna funkcja straty (błąd średniokwadratowy)
 
         # --- 4. Model Training ---
         print(f"\nStarting training for {config.NUM_EPOCHS} epochs...")
@@ -94,11 +94,22 @@ def main():
                 for i, (inputs, labels) in enumerate(train_loader):
                     inputs, labels = inputs.to(device), labels.to(device)
                     optimizer.zero_grad()
-                    outputs = pilotnet_model(inputs)
-                    loss = criterion(outputs, labels)
-                    loss.backward()
+                    outputs = pilotnet_model(inputs) # Przewidywane kąty skrętu
+
+                    # 1. Główna strata (MSE)
+                    loss_mse = criterion_mse(outputs, labels)
+
+                    # 2. Strata za brak płynności (smoothness loss)
+                    loss_smoothness = torch.tensor(0.0, device=device)
+                    if outputs.size(0) > 1: # Oblicz tylko jeśli paczka ma więcej niż 1 element
+                        # Różnica między kolejnymi predykcjami w paczce
+                        smoothness_diff = outputs[1:] - outputs[:-1]
+                        loss_smoothness = torch.mean(smoothness_diff**2)
+
+                    total_loss = loss_mse + config.LAMBDA_SMOOTHNESS * loss_smoothness
+                    total_loss.backward()
                     optimizer.step()
-                    running_loss += loss.item()
+                    running_loss += total_loss.item()
 
                 avg_train_loss = running_loss / len(train_loader)
                 log_msg = (
@@ -113,9 +124,20 @@ def main():
                             inputs_val, labels_val = inputs_val.to(
                                 device
                             ), labels_val.to(device)
-                            outputs_val = pilotnet_model(inputs_val)
-                            loss_val = criterion(outputs_val, labels_val)
-                            val_running_loss += loss_val.item()
+                            outputs_val = pilotnet_model(inputs_val) # Przewidywane kąty
+
+                            # 1. Główna strata (MSE) dla walidacji
+                            loss_mse_val = criterion_mse(outputs_val, labels_val)
+
+                            # 2. Strata za brak płynności dla walidacji
+                            loss_smoothness_val = torch.tensor(0.0, device=device)
+                            if outputs_val.size(0) > 1:
+                                smoothness_diff_val = outputs_val[1:] - outputs_val[:-1]
+                                loss_smoothness_val = torch.mean(smoothness_diff_val**2)
+                            
+                            total_loss_val = loss_mse_val + config.LAMBDA_SMOOTHNESS * loss_smoothness_val
+                            val_running_loss += total_loss_val.item()
+
                     avg_val_loss = val_running_loss / len(val_loader)
                     log_msg += f" - val_loss: {avg_val_loss:.4f}"
 
