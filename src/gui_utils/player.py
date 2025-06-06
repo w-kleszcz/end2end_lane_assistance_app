@@ -22,6 +22,35 @@ from model.data_loader import (
 )
 
 
+def make_white_background_transparent(image: Image.Image, threshold=240) -> Image.Image:
+    image = image.convert("RGBA")
+    data = image.getdata()
+
+    new_data = []
+    for item in data:
+        # Detect white or near-white pixels
+        if item[0] >= threshold and item[1] >= threshold and item[2] >= threshold:
+            new_data.append((255, 255, 255, 0))  # Fully transparent
+        else:
+            new_data.append(item)
+
+    image.putdata(new_data)
+    return image
+
+
+def set_image_opacity(image: Image.Image, opacity: float) -> Image.Image:
+    """
+    Sets the opacity of an RGBA image. `opacity` should be between 0.0 (fully transparent) and 1.0 (fully opaque).
+    """
+    if image.mode != "RGBA":
+        image = image.convert("RGBA")
+
+    alpha = image.split()[3]
+    alpha = alpha.point(lambda p: int(p * opacity))
+    image.putalpha(alpha)
+    return image
+
+
 class Player:
     FRAME_DELAY_DEFAULT = 0.033  # ~30 FPS
 
@@ -55,6 +84,27 @@ class Player:
         self.img_to_steering = None
         self.device = None
         self.cam_extractor = None
+
+        self.driving_wheel_size = (100, 100)
+        self.driving_wheel_meas = Image.open("src/assets/driving_wheel.png").convert(
+            "RGBA"
+        )
+        self.driving_wheel_meas = make_white_background_transparent(
+            self.driving_wheel_meas
+        )
+        self.driving_wheel_meas = self.driving_wheel_meas.resize(
+            self.driving_wheel_size
+        )
+        self.driving_wheel_pred = Image.open(
+            "src/assets/driving_wheel_green.png"
+        ).convert("RGBA")
+        self.driving_wheel_pred = make_white_background_transparent(
+            self.driving_wheel_pred
+        )
+        self.driving_wheel_pred = self.driving_wheel_pred.resize(
+            self.driving_wheel_size
+        )
+        self.driving_wheel_pred = set_image_opacity(self.driving_wheel_pred, 0.6)
 
         with dpg.theme() as self.red_theme:
             with dpg.theme_component(dpg.mvInputFloat):
@@ -158,6 +208,11 @@ class Player:
                 output = self.model(image)  # Shape [1, 1] or [1]
                 pred = output.item()
 
+            # Rotate wheels
+            wheel_pred = self.driving_wheel_pred.rotate(
+                -pred, resample=Image.BICUBIC, expand=False
+            )
+
             class_idx = 0
             activation_map = self.cam_extractor(class_idx, output)
             # Get CAM and ensure it's on CPU
@@ -169,13 +224,24 @@ class Player:
             elif cam.dim() == 3:
                 cam = cam.unsqueeze(0)  # [1, C, H, W]
 
+            target_size = (orig_image.size[1], orig_image.size[0])
             cam_resized = torch.nn.functional.interpolate(
-                cam, size=(256, 455), mode="bilinear", align_corners=False
+                cam, size=target_size, mode="bilinear", align_corners=False
             )
             cam_resized = cam_resized.squeeze()
 
             # Convert to RGB heatmap and save
             heatmap = ToPILImage()(cam_resized.expand(3, -1, -1))
+            width, height = orig_image.size
+            # Compute region from bottom (e.g., 10% to 60% from bottom)
+            bottom = height - int(height * 0.10)  # 10% from bottom
+            top = height - int(height * 0.60)  # 60% from bottom
+            masked_heatmap = Image.new("RGB", (width, height), (0, 0, 0))
+            heatmap_cropped = heatmap.crop((0, top, width, bottom))
+
+            # Paste cropped heatmap back into the masked image
+            masked_heatmap.paste(heatmap_cropped, (0, top))
+
             if self.img_to_steering is not None:
                 img_name = Path(self.image_paths[index]).name
                 img_with_steering = next(
@@ -203,14 +269,29 @@ class Player:
                             self.tag_with_namespace("angle_error"), self.default_theme
                         )
 
+                    wheel_meas = self.driving_wheel_meas.rotate(
+                        -measured, resample=Image.BICUBIC, expand=False
+                    )
+
             dpg.set_value(self.tag_with_namespace("predicted_angle"), pred)
 
-            overlay = Image.blend(orig_image, heatmap, alpha=0.3)
+            overlay = Image.blend(orig_image, masked_heatmap, alpha=0.3)
             # overlay.save("overlay_" + img_name)
             overlay = overlay.convert("RGBA")  # Convert to RGBA
             overlay = overlay.resize(
                 (640, 480)
             )  # Resize to match DPG texture size if needed
+
+            wheel_y = (
+                overlay.height - self.driving_wheel_size[1] - 10
+            )  # 10px padding from bottom
+            # pred_x = overlay.width - self.driving_wheel_size[0] - 10    # right side
+            wheel_x = int((overlay.width - self.driving_wheel_size[0]) / 2)  # left side
+            if self.img_to_steering is not None and measured is not None:
+                overlay.paste(wheel_meas, (wheel_x, wheel_y), wheel_meas)
+
+            # Paste predicted steering wheel
+            overlay.paste(wheel_pred, (wheel_x, wheel_y), wheel_pred)
 
             overlay_np = np.array(overlay).astype(np.float32) / 255.0  # Normalize
             overlay_flat = overlay_np.flatten()
