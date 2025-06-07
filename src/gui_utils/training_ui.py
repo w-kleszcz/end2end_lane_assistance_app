@@ -6,10 +6,13 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
+import mlflow
+from mlflow import pytorch as mlflow_pytorch_api
+import numpy as np
 
 from model.data_loader import create_dataloaders_from_yaml
 from model.model import build_pilotnet_model
-import model.config as global_train_config  # For default values
+import model.config as global_train_config 
 
 UI_INPUT_WIDTH_LONG = 550  # Define it here or pass as argument
 
@@ -31,7 +34,9 @@ RANDOM_STATE_INPUT_TAG = "training_ui::random_state_input_tag"
 NUM_WORKERS_INPUT_TAG = "training_ui::num_workers_input_tag"
 EARLY_STOPPING_PATIENCE_INPUT_TAG = "training_ui::early_stopping_patience_input_tag"
 LAMBDA_SMOOTHNESS_INPUT_TAG = "training_ui::lambda_smoothness_input_tag"
-
+MLFLOW_ENABLE_CHECKBOX_TAG = "training_ui::mlflow_enable_checkbox_tag"
+MLFLOW_EXPERIMENT_NAME_INPUT_TAG = "training_ui::mlflow_experiment_name_input_tag"
+MLFLOW_RUN_NAME_INPUT_TAG = "training_ui::mlflow_run_name_input_tag"
 
 def log_to_gui(message):
     """Puts a message into the training log queue."""
@@ -65,6 +70,9 @@ def run_training_thread(
     num_workers,
     early_stopping_patience,
     lambda_smoothness,
+    mlflow_enabled,
+    mlflow_experiment_name,
+    mlflow_run_name,
 ):
     """The main logic for training, adapted from train.py."""
     try:
@@ -83,8 +91,71 @@ def run_training_thread(
         log_to_gui(f"  Random State: {random_state}\n")
         log_to_gui(f"  Num Workers: {num_workers}\n")
         log_to_gui(f"  Early Stopping Patience: {early_stopping_patience}\n\n")
-        log_to_gui(f"  Lambda Smoothness: {lambda_smoothness}\n\n")
+        log_to_gui(f"  Lambda Smoothness: {lambda_smoothness}\n")
+        log_to_gui(f"  MLflow Enabled: {mlflow_enabled}\n")
+        if mlflow_enabled:
+            log_to_gui(f"  MLflow Experiment: {mlflow_experiment_name}\n")
+            log_to_gui(f"  MLflow Run Name: {mlflow_run_name if mlflow_run_name else 'Default (auto-generated)'}\n\n")
+        else:
+            log_to_gui("\n")
 
+        if mlflow_enabled:
+            mlflow.set_experiment(mlflow_experiment_name)
+            with mlflow.start_run(run_name=mlflow_run_name if mlflow_run_name else None) as run:
+                log_to_gui(f"MLflow Run ID: {run.info.run_id}\n")
+                _perform_training_steps(
+                    data_config_path, plot_save_path, model_save_path, batch_size, num_epochs,
+                    learning_rate, val_split_size, random_state, num_workers,
+                    early_stopping_patience, lambda_smoothness, device, mlflow_enabled=True
+                )
+        else:
+            _perform_training_steps(
+                data_config_path, plot_save_path, model_save_path, batch_size, num_epochs,
+                learning_rate, val_split_size, random_state, num_workers,
+                early_stopping_patience, lambda_smoothness, device, mlflow_enabled=False
+            )
+
+    except Exception as e:
+        log_to_gui(f"\n--- ERROR during training process ---\n{str(e)}\n")
+        import traceback
+        log_to_gui(traceback.format_exc() + "\n")
+        dpg.set_value(TRAINING_STATUS_TAG, "Status: Error")
+        if mlflow_enabled and mlflow.active_run():
+            mlflow.set_tag("training_status", "error_outer_scope")
+            mlflow.set_tag("error_message", str(e))
+            mlflow.end_run(status="FAILED")
+    finally:
+        dpg.configure_item(TRAIN_BUTTON_TAG, enabled=True)
+
+
+def _perform_training_steps(
+    data_config_path, plot_save_path, model_save_path, batch_size, num_epochs,
+    learning_rate, val_split_size, random_state, num_workers,
+    early_stopping_patience, lambda_smoothness, device, mlflow_enabled
+):
+    """Helper function containing the core training and evaluation logic."""
+    
+    if mlflow_enabled:
+        params_to_log = {
+            "data_config_path": data_config_path,
+            "plot_save_path": plot_save_path,
+            "model_save_path": model_save_path,
+            "batch_size_gui": batch_size,
+            "num_epochs_gui": num_epochs,
+            "learning_rate_gui": learning_rate,
+            "val_split_size_gui": val_split_size,
+            "random_state_gui": random_state,
+            "num_workers_gui": num_workers,
+            "early_stopping_patience_gui": early_stopping_patience,
+            "lambda_smoothness_gui": lambda_smoothness,
+            "IMG_CHANNELS_config": global_train_config.IMG_CHANNELS,
+            "IMG_HEIGHT_config": global_train_config.IMG_HEIGHT,
+            "IMG_WIDTH_config": global_train_config.IMG_WIDTH,
+            "device": str(device),
+        }
+        mlflow.log_params(params_to_log)
+
+    try:
         train_loader, val_loader, test_loader = create_dataloaders_from_yaml(
             data_config_path,
             batch_size=batch_size,
@@ -103,8 +174,12 @@ def run_training_thread(
             )
             dpg.set_value(TRAINING_STATUS_TAG, "Error: Training data empty")
             return
-        log_to_gui("Data loaded successfully.\n")
-
+        log_to_gui(f"Data loaded successfully. Train batches: {len(train_loader)}, Val batches: {len(val_loader) if val_loader else 0}, Test batches: {len(test_loader) if test_loader else 0}\n")
+        if mlflow_enabled:
+            mlflow.log_param("actual_train_loader_batch_size", train_loader.batch_size)
+            mlflow.log_param("actual_train_loader_num_workers", train_loader.num_workers)
+            mlflow.set_tag("data_loading_status", "success")
+            
         pilotnet_model = build_pilotnet_model(
             input_channels=global_train_config.IMG_CHANNELS
         )
@@ -144,6 +219,8 @@ def run_training_thread(
 
             avg_train_loss = running_loss / len(train_loader)
             current_logs = {"loss": avg_train_loss}
+            if mlflow_enabled:
+                mlflow.log_metric("train_loss", avg_train_loss, step=epoch)
 
             avg_val_loss = None
             if val_loader and len(val_loader) > 0:
@@ -168,6 +245,8 @@ def run_training_thread(
 
                 avg_val_loss = val_running_loss / len(val_loader)
                 current_logs["val_loss"] = avg_val_loss
+                if mlflow_enabled:
+                    mlflow.log_metric("val_loss", avg_val_loss, step=epoch)
                 log_to_gui(format_log_message(epoch, current_logs, num_epochs))
 
                 if avg_val_loss < best_val_loss:
@@ -176,13 +255,16 @@ def run_training_thread(
                     log_to_gui(
                         f"Epoch {epoch+1}: val_loss improved to {avg_val_loss:.4f}, model saved.\n"
                     )
+                    if mlflow_enabled:
+                        mlflow.set_tag(f"epoch_{epoch+1}_val_loss_improved", True)
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
                     log_to_gui(
                         f"Epoch {epoch+1}: val_loss ({avg_val_loss:.4f}) did not improve from {best_val_loss:.4f}.\n"
                     )
-
+                    if mlflow_enabled:
+                         mlflow.set_tag(f"epoch_{epoch+1}_val_loss_improved", False)
                 if (
                     early_stopping_patience > 0
                     and epochs_no_improve >= early_stopping_patience
@@ -191,6 +273,8 @@ def run_training_thread(
                     log_to_gui(
                         f"Early stopping triggered after {epochs_no_improve} epochs without improvement.\n"
                     )
+                    if mlflow_enabled:
+                        mlflow.set_tag("early_stopping", "triggered")
                     break
             else:
                 log_to_gui(format_log_message(epoch, current_logs, num_epochs))
@@ -199,14 +283,26 @@ def run_training_thread(
                     log_to_gui(f"Model saved at end of training (no validation).\n")
 
         log_to_gui("Training completed.\n")
-
+        if mlflow_enabled:
+            mlflow.log_metric("final_best_val_loss", best_val_loss if best_val_loss != float('inf') else -1.0)
+            if stopped_epoch_num > 0:
+                mlflow.log_param("stopped_epoch", stopped_epoch_num)
+            if not (val_loader and len(val_loader) > 0) and os.path.exists(model_save_path):
+                 mlflow.set_tag("model_saved_reason", "end_of_training_no_validation")
+            elif best_val_loss != float('inf') and os.path.exists(model_save_path):
+                 mlflow.set_tag("model_saved_reason", "validation_improvement")
+        
         if stopped_epoch_num > 0:
             log_to_gui(f"Early stopping was triggered at epoch {stopped_epoch_num}.\n")
 
         if os.path.exists(model_save_path):
             log_to_gui(f"Best model saved to: {model_save_path}\n")
+            if mlflow_enabled:
+                mlflow.log_artifact(model_save_path, artifact_path="model_checkpoint")
+                mlflow_pytorch_api.log_model(pilotnet_model, "model")
         else:
             log_to_gui("No model was saved.\n")
+            if mlflow_enabled: mlflow.set_tag("model_saved", "false")
 
         if test_loader and len(test_loader) > 0:
             log_to_gui("Evaluating model on the test set...\n")
@@ -243,21 +339,34 @@ def run_training_thread(
                 os.makedirs(plot_dir)
             plt.savefig(plot_save_path)
             log_to_gui(f"Evaluation plot saved to {plot_save_path}\n")
-            plt.close()
+            if mlflow_enabled:
+                mlflow.log_artifact(plot_save_path, artifact_path="evaluation_plots")
+            plt.close() # Close plot to free memory
+
+            if preds and truths: # Calculate and log test MSE
+                test_mse = ((np.array(preds) - np.array(truths)) ** 2).mean()
+                log_to_gui(f"Test MSE: {test_mse:.4f}\n")
+                if mlflow_enabled: mlflow.log_metric("test_mse", test_mse)
         else:
             log_to_gui("INFO: No test_loader available for evaluation.\n")
+            if mlflow_enabled: mlflow.set_tag("test_evaluation_status", "skipped_no_loader")
+
 
         log_to_gui("--- Training Process Finished Successfully ---\n")
         dpg.set_value(TRAINING_STATUS_TAG, "Status: Completed")
 
-    except Exception as e:
-        log_to_gui(f"\n--- ERROR during training process ---\n{str(e)}\n")
+        if mlflow_enabled: mlflow.set_tag("training_status", "completed")
+
+    except Exception as e: # Catch errors within _perform_training_steps
+        log_to_gui(f"\n--- ERROR during training steps ---\n{str(e)}\n")
         import traceback
 
         log_to_gui(traceback.format_exc() + "\n")
         dpg.set_value(TRAINING_STATUS_TAG, "Status: Error")
-    finally:
-        dpg.configure_item(TRAIN_BUTTON_TAG, enabled=True)
+        if mlflow_enabled:
+            mlflow.set_tag("training_status", "error_inner_scope")
+            mlflow.set_tag("error_message", str(e))
+            # The run will be ended by the outer context manager
 
 
 def on_start_training_clicked():
@@ -274,10 +383,19 @@ def on_start_training_clicked():
     early_stopping_patience = dpg.get_value(EARLY_STOPPING_PATIENCE_INPUT_TAG)
     lambda_smoothness = dpg.get_value(LAMBDA_SMOOTHNESS_INPUT_TAG)
 
+    # Get MLflow UI values
+    mlflow_enabled = dpg.get_value(MLFLOW_ENABLE_CHECKBOX_TAG)
+    mlflow_experiment_name = dpg.get_value(MLFLOW_EXPERIMENT_NAME_INPUT_TAG)
+    mlflow_run_name = dpg.get_value(MLFLOW_RUN_NAME_INPUT_TAG)
+
     # Basic Validations
     if not data_config or not os.path.isfile(data_config):
         log_to_gui("ERROR: Data Config YAML path is invalid or file does not exist.\n")
         dpg.set_value(TRAINING_STATUS_TAG, "Error: Invalid Data Config Path")
+        return
+    if mlflow_enabled and not mlflow_experiment_name:
+        log_to_gui("ERROR: MLflow Experiment Name is required when MLflow is enabled.\n")
+        dpg.set_value(TRAINING_STATUS_TAG, "Error: MLflow Experiment Name missing")
         return
     # Add more validations as in the original app.py for other fields...
 
@@ -299,6 +417,9 @@ def on_start_training_clicked():
             num_workers,
             early_stopping_patience,
             lambda_smoothness,
+            mlflow_enabled,
+            mlflow_experiment_name,
+            mlflow_run_name,
         ),
         daemon=True,
     )
@@ -469,6 +590,15 @@ def create_training_tab_content(parent_tab_id):
             )
 
         dpg.add_spacer(height=10)
+        dpg.add_text("MLflow Logging Configuration:")
+        dpg.add_checkbox(label="Enable MLflow Logging", tag=MLFLOW_ENABLE_CHECKBOX_TAG, default_value=True)
+        dpg.add_input_text(label="MLflow Experiment Name", tag=MLFLOW_EXPERIMENT_NAME_INPUT_TAG,
+                           default_value=global_train_config.MLFLOW_DEFAULT_EXPERIMENT_NAME, width=UI_INPUT_WIDTH_LONG -70) # Adjusted width
+        dpg.add_input_text(label="MLflow Run Name (Optional)", tag=MLFLOW_RUN_NAME_INPUT_TAG,
+                           hint="Leave blank for auto-generated", width=UI_INPUT_WIDTH_LONG - 70) # Adjusted width
+
+
+        dpg.add_spacer(height=10)        
         dpg.add_button(
             label="Start Model Training",
             tag=TRAIN_BUTTON_TAG,

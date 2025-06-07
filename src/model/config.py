@@ -25,3 +25,6 @@ MODEL_SAVE_PATH = "models/pilotnet_pytorch.pth"
 # Set to >0 for multi-threaded loading, e.g., 2 or 4.
 # On Windows or in some environments (e.g., Jupyter), it might be necessary to set this to 0.
 NUM_WORKERS = 0
+
+# --- MLflow Configuration ---
+MLFLOW_DEFAULT_EXPERIMENT_NAME = "PilotNet_Training"
