@@ -317,12 +317,6 @@ with dpg.window(
                     callback=model_evaluator.on_jump_n_frames_fwd,
                 )
 
-            with dpg.group(horizontal=True):
-                dpg.add_button(
-                    label="Generate plot",
-                    # callback=dataset_preparator.on_save_dataset
-                )
-
         with dpg.tab(label="Model Deployment"):
 
             deployed_model_player = Player(
@@ -431,11 +425,6 @@ with dpg.window(
                     callback=deployed_model_player.on_jump_n_frames_fwd,
                 )
 
-            # with dpg.group(horizontal=True):
-            #     dpg.add_button(
-            #         label="Generate plot",
-            #         # callback=dataset_preparator.on_save_dataset
-            #     )
 
 # ---------- Launch ----------
 dpg.setup_dearpygui()

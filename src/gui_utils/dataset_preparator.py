@@ -47,17 +47,14 @@ class DatasetPreparator(Player):
         self.raw_data_folder = raw_data_folder
 
     def on_image_annotations_file_selected(self, sender, app_data, user_data):
-        print("Selected image annotations file: ", app_data["file_path_name"])
         self.image_annotations_file = app_data["file_path_name"]
         dpg.set_value("preparator::annotations_file_path", app_data["file_path_name"])
 
     def on_test_dataset_start(self):
         self.test_set_idx_start = self.frame_index
-        print("Test set start index set to ", self.test_set_idx_start)
 
     def on_test_dataset_finish(self):
         self.test_set_idx_finish = self.frame_index
-        print("Test set finish index set to ", self.test_set_idx_finish)
 
     def on_save_dataset(self, path):
         if self.image_annotations_file == "":

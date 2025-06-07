@@ -301,7 +301,6 @@ class Player:
     def play_loop(self):
         while self.playing and self.get_number_of_valid_frames() > 0:
             self.load_frame(self.frame_index)
-            print("Playing frame ", self.frame_index)
 
             valid_indices = self.get_valid_frame_indices()
             current_pos = self.get_slider_index_from_frame_index(self.frame_index)
@@ -312,7 +311,6 @@ class Player:
             time.sleep(self.frame_delay)
 
     def on_folder_selected(self, sender, app_data, user_data):
-        print("Selected folder: ", app_data["file_path_name"])
         self.image_paths = natsorted(
             glob.glob(os.path.join(app_data["file_path_name"], "*.jpg"))
         )
@@ -419,13 +417,6 @@ class Player:
             self.set_slider_to_frame_index(self.frame_index)
             self.load_frame(self.frame_index)
 
-            print("Currently skipped frames: ", self.images_idx_to_skip)
-            print(
-                "Slider max ",
-                dpg.get_item_configuration(self.tag_with_namespace("frame_slider"))[
-                    "max_value"
-                ],
-            )
 
     def on_undo_last_frame_remove(self):
         if len(self.images_idx_to_skip) > 0:
@@ -435,7 +426,6 @@ class Player:
                 max_value=self.get_number_of_valid_frames() - 1,
             )
             self.set_slider_to_frame_index(self.frame_index)
-            print("Currently skipped frames: ", self.images_idx_to_skip)
 
     def set_slider_to_frame_index(self, frame_index):
         slider_index = self.get_slider_index_from_frame_index(frame_index)
@@ -473,7 +463,6 @@ class Player:
 
         # Range of frames to skip
         indices_to_skip = list(range(start, end + 1))
-        print(f"Skipping frames from {start} to {end}")
 
         # Add to skip list (no duplicates)
         self.images_idx_to_skip.extend(
@@ -508,10 +497,3 @@ class Player:
         dpg.configure_item(self.tag_with_namespace("skip_frames_finish"), enabled=False)
         dpg.configure_item(self.tag_with_namespace("reset_skip_frames"), enabled=False)
 
-        print("Currently skipped frames: ", self.images_idx_to_skip)
-        print(
-            "Slider max ",
-            dpg.get_item_configuration(self.tag_with_namespace("frame_slider"))[
-                "max_value"
-            ],
-        )
