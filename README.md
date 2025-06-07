@@ -25,6 +25,11 @@ Repozytorium pracy dyplomowej "Implementacja prototypu planera end-to-end"
 ```bash
 python src/app.py
 ```
+W celu uruchomienia MLFlow:
+```bash
+mlflow ui
+```
+Wyniki zapisane do MLFlow można zwizualizować w http://localhost:5000
 
 ---
 ## Obsługa danych
@@ -36,3 +41,6 @@ Obecnie obsługiwanym datasetem jest https://drive.google.com/file/d/1PZWa6H0i1P
 Odpakuj pobrane archiwum w folderze data/raw
 
 ---
+## Przygotowanie danych
+
+Dla wygody użytkownika, do repozytorium dodano plik dataset_recipe.yaml, który zawiera metadane z obróbki wyżej wymienionego datasetu. Rekomendujemy użycie tego pliku do pracy z aplikacją w krokach trenowania i ewaluacji modelu.
